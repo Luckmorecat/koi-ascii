@@ -17,6 +17,8 @@ interface Sample {
   grey: boolean;
   /** Largest channel value of any pixel, per channel. */
   max: RGB;
+  /** Smallest channel value of any pixel, per channel. */
+  min: RGB;
 }
 
 const BOX = { left: 0, top: 0, width: 320, height: 240 };
@@ -38,16 +40,20 @@ function sample(page: Page, i: number, keep?: string): Promise<Sample> {
       const counts = new Map<number, number>();
       let grey = true;
       const max: [number, number, number] = [0, 0, 0];
+      const min: [number, number, number] = [255, 255, 255];
       for (let p = 0; p < px.length; p += 4) {
         const key = (px[p] << 16) | (px[p + 1] << 8) | px[p + 2];
         counts.set(key, (counts.get(key) ?? 0) + 1);
         if (px[p] !== px[p + 1] || px[p + 1] !== px[p + 2]) grey = false;
-        for (let c = 0; c < 3; c++) max[c] = Math.max(max[c], px[p + c]);
+        for (let c = 0; c < 3; c++) {
+          max[c] = Math.max(max[c], px[p + c]);
+          min[c] = Math.min(min[c], px[p + c]);
+        }
       }
       let best = 0;
       let n = 0;
       for (const [key, c] of counts) if (c > n) [best, n] = [key, c];
-      return { mode: [best >> 16, (best >> 8) & 255, best & 255], modeShare: n / (w * h), grey, max };
+      return { mode: [best >> 16, (best >> 8) & 255, best & 255], modeShare: n / (w * h), grey, max, min };
     },
     [i, keep ?? ''] as const,
   ) as Promise<Sample>;
@@ -236,6 +242,14 @@ test('filter: an inverted filter takes the tint too', async ({ page }) => {
   expect(tinted.grey).toBe(false);
   // The background stays put; only the ink takes the tint.
   expect(tinted.mode).toEqual(hex('#eeeeee'));
+
+  // A grey tint softens the ink, as it dims glyphs when not inverted.
+  await page.evaluate(([i, p]) => window.koiTest.ponds[i].handle.setPalette({ ...p, tint: '#808080' }), [i, plain] as const);
+  const soft = await sample(page, i, 'invert-grey');
+  expect(await differing(page, 'invert-plain', 'invert-grey')).toBeGreaterThan(0);
+  expect(soft.grey).toBe(true);
+  expect(soft.min[0]).toBeGreaterThan(untinted.min[0]);
+  expect(soft.mode).toEqual(hex('#eeeeee'));
 });
 
 test('the raw view ignores the palette and intensity', async ({ page }) => {

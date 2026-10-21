@@ -44,8 +44,11 @@ vec3 filtered(vec3 pix) {
   float y = lum(d);
   vec3 chroma = (d - vec3(y)) * uSaturation;
   // Inverted: the signal darkens the background. The tint steers the ink's
-  // hue: channels the tint lacks are taken away harder (white = even).
-  if (uInvert == 1) return uOutBg - y * 1.25 * (vec3(1.0 + lum(uTint)) - uTint) + chroma * 0.9;
+  // hue (channels the tint lacks are taken away harder; white = even) and its
+  // brightness scales the ink, so a grey tint softens it as it dims glyphs
+  // when not inverted.
+  float tl = lum(uTint);
+  if (uInvert == 1) return uOutBg - y * 1.25 * tl * (vec3(1.0 + tl) - uTint) + chroma * 0.9;
   return uOutBg + (vec3(y) + chroma) * uTint;
 }
 
