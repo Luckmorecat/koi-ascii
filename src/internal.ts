@@ -12,6 +12,8 @@ export { LoopSource, MAX_CYCLE_S, MIN_CYCLE_S, type Sky } from './sky';
 export interface PondStats {
   fps: number;
   frameMs: number;
+  /** Frames simulated and drawn so far, by the frame loop and by step(). */
+  frames: number;
   seed: number;
   gpu: string;
   software: boolean;
@@ -25,6 +27,22 @@ export interface PondCore {
   /** Null while the WebGL context is lost. */
   readonly renderer: Renderer | null;
   readonly stats: PondStats;
+  /** The pond's canvas (replaced by a blank one if the pond fails). */
+  readonly canvas: HTMLCanvasElement;
+  /**
+   * Simulates and draws one frame of `dt` seconds now, outside the frame
+   * loop, so it works while paused or in a background tab. Returns false
+   * when nothing could be drawn (context lost, pond collapsed or failed).
+   */
+  step(dt: number): boolean;
+  /**
+   * Draws the current state again without advancing anything. The drawing
+   * buffer stays readable (toDataURL) until the task ends, so a capture needs
+   * no preserveDrawingBuffer. Returns false like step().
+   */
+  redraw(): boolean;
+  /** Overrides window.devicePixelRatio for sizing the canvas (null restores it) and re-measures the canvas now. */
+  setDpr(dpr: number | null): void;
 }
 
 /** Called from the pond's frame loop at the points the perf overlay measures. */
