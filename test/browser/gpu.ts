@@ -1,6 +1,6 @@
 // The one way to launch Chromium for this repo: hardware WebGL on the GPU,
 // never SwiftShader. Used by playwright.config.ts, gpu-setup.ts and
-// scripts/shot.mjs (which imports this file directly, so keep it to
+// scripts/demo.mjs (which imports this file directly, so keep it to
 // erasable TypeScript: type-only imports, no enums).
 import type { Browser, LaunchOptions } from '@playwright/test';
 

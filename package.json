@@ -1,6 +1,6 @@
 {
   "name": "koi-ascii",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "An ASCII-art koi pond for page backgrounds. WebGL2, no dependencies.",
   "keywords": [
     "koi",
@@ -46,6 +46,8 @@
     "prepublishOnly": "npm run typecheck && npm run build",
     "test:browser": "playwright test",
     "shot": "node --experimental-strip-types scripts/shot.mjs",
+    "shots": "node --experimental-strip-types scripts/shots.mjs",
+    "perf": "node --experimental-strip-types scripts/perf.mjs",
     "proto:avoid": "vite --config vite.demo.config.ts --open /prototype-avoid/"
   },
   "devDependencies": {

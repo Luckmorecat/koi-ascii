@@ -4,3 +4,4 @@ dist-demo
 *.local
 test-results
 playwright-report
+.claude/worktrees

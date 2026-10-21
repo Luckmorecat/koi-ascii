@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KoiPond, KoiPondError } from '../src/index';
 import { createApi, type KoiApi } from '../demo/debug/api';
-import { DEFAULT_SCENE } from '../demo/scene';
+import { DEFAULT_SCENE, type PondLook, type SceneState } from '../demo/scene';
+import { DEFAULT_SKY, NO_SKY } from '../src/sky-features';
 import type { PondCore, PondHooks } from '../src/internal';
 
 // Captures the API's hooks so a test can bring a stand-in pond up.
@@ -16,23 +17,44 @@ vi.mock('../src/internal', async (actual) => ({
 let failers: ((e: KoiPondError) => void)[];
 let destroyed: number;
 let koi: KoiApi;
+/** What each mount was given, and what each pond's setters were called with. */
+let mounts: { seed: number; look: PondLook }[];
+let calls: string[];
+let replaceState: ReturnType<typeof vi.fn>;
 
-beforeEach(() => {
-  hooks.length = 0;
+/** Starts the API on `scene` (the default scene unless a test starts its own). */
+function start(scene: SceneState = { ...DEFAULT_SCENE }): void {
   failers = [];
-  destroyed = 0;
-  vi.stubGlobal('location', { search: '?debug', pathname: '/', hash: '' });
-  vi.stubGlobal('history', { state: null, replaceState: vi.fn() });
-  vi.stubGlobal('window', { devicePixelRatio: 1 });
-  const handle = (): KoiPond => ({ setTime() {}, pause() {}, resume() {}, destroy: () => void destroyed++ });
+  mounts = [];
+  const handle = (): KoiPond => ({
+    setTime() {},
+    setPalette: (p) => void calls.push(`palette ${String(p)}`),
+    setIntensity: (i) => void calls.push(`intensity ${i}`),
+    setSky: (sky) => void calls.push(`sky ${JSON.stringify(sky)}`),
+    pause() {},
+    resume() {},
+    destroy: () => void destroyed++,
+  });
   koi = createApi({
     container: { getBoundingClientRect: () => ({ width: 800, height: 600 }), style: {} } as unknown as HTMLElement,
-    scene: { ...DEFAULT_SCENE },
-    mount: (_seed, _time, onError) => {
+    scene,
+    mount: (seed, _time, look, onError) => {
+      mounts.push({ seed, look });
       failers.push(onError);
       return handle();
     },
   });
+}
+
+beforeEach(() => {
+  hooks.length = 0;
+  destroyed = 0;
+  calls = [];
+  replaceState = vi.fn();
+  vi.stubGlobal('location', { search: '?debug', pathname: '/', hash: '' });
+  vi.stubGlobal('history', { state: null, replaceState });
+  vi.stubGlobal('window', { devicePixelRatio: 1 });
+  start();
 });
 
 afterEach(() => vi.unstubAllGlobals());
@@ -121,5 +143,113 @@ describe('a manual draw that draws nothing', () => {
   it('reports not-ready, not context-lost, for a collapsed pond', async () => {
     up(() => false);
     expect(await koi.call('capture')).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+  });
+});
+
+describe('palette and intensity', () => {
+  /** Brings pond `i` up with a minimal core. */
+  const up = (i = 0) =>
+    hooks[i].ready?.({
+      gl: { getExtension: () => null },
+      renderer: {},
+      stats: { frames: 0 },
+      sky: { phase: 0 },
+      pond: { time: 0, fish: [] },
+      canvas: {},
+      setDpr() {},
+    } as unknown as PondCore);
+
+  it('mounts with the scene palette and intensity', () => {
+    start({ ...DEFAULT_SCENE, palette: 'paper', intensity: 0.35 });
+    expect(mounts.at(-1)!.look).toEqual({ palette: 'paper', intensity: 0.35, sky: DEFAULT_SKY });
+  });
+
+  it('sets them on the pond, reports them in getState and saves them in the URL', async () => {
+    up();
+    expect(await koi.call('setPalette', { palette: 'amber' })).toEqual({ ok: true, result: { view: 'final', glow: true, glowAvailable: true, palette: 'amber', intensity: 1 } });
+    expect(await koi.call('setIntensity', { intensity: 0.35 })).toMatchObject({ ok: true, result: { palette: 'amber', intensity: 0.35 } });
+    expect(calls).toEqual(['palette amber', 'intensity 0.35']);
+    expect(replaceState).toHaveBeenLastCalledWith(null, '', '/?debug&palette=amber&intensity=0.35');
+    expect(await koi.call('getState')).toMatchObject({ ok: true, result: { render: { palette: 'amber', intensity: 0.35 } } });
+  });
+
+  it('carries them over a reseed', async () => {
+    up();
+    await koi.call('setPalette', { palette: 'mono' });
+    await koi.call('setIntensity', { intensity: 0.5 });
+    void koi.call('reseed', { seed: 9 });
+    expect(mounts.at(-1)).toEqual({ seed: 9, look: { palette: 'mono', intensity: 0.5, sky: DEFAULT_SKY } });
+  });
+
+  it('accepts only preset names and intensities in [0, 1]', async () => {
+    up();
+    expect(await koi.call('setPalette', { palette: 'neon' })).toMatchObject({ ok: false, error: { code: 'invalid-args' } });
+    expect(await koi.call('setPalette', { palette: { mode: 'ramp', colors: ['#000', '#fff'] } })).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-args' },
+    });
+    expect(await koi.call('setIntensity', { intensity: 1.5 })).toMatchObject({ ok: false, error: { code: 'invalid-args' } });
+    expect(await koi.call('setIntensity', {})).toMatchObject({ ok: false, error: { code: 'invalid-args' } });
+    expect(calls).toEqual([]);
+  });
+
+  it('are listed by help()', () => {
+    const help = koi.help();
+    expect(help).toContain('setPalette(args)');
+    expect(help).toContain('setIntensity(args)');
+  });
+});
+
+describe('sky', () => {
+  const up = (i = 0) =>
+    hooks[i].ready?.({
+      gl: { getExtension: () => null },
+      renderer: {},
+      stats: { frames: 0 },
+      sky: { phase: 0 },
+      pond: { time: 0, fish: [] },
+      canvas: {},
+      setDpr() {},
+    } as unknown as PondCore);
+
+  it('mounts with the scene sky', () => {
+    start({ ...DEFAULT_SCENE, sky: NO_SKY });
+    expect(mounts.at(-1)!.look.sky).toEqual(NO_SKY);
+  });
+
+  it('sets features one at a time, reports them in getState and saves them in the URL', async () => {
+    up();
+    expect(await koi.call('setSky', { moon: true })).toEqual({ ok: true, result: { ...DEFAULT_SKY, moon: true } });
+    expect(await koi.call('setSky', { stars: false, fireflies: false, darkNight: false })).toMatchObject({
+      ok: true,
+      result: { stars: false, fireflies: false, darkNight: false, moon: true, sun: false },
+    });
+    expect(calls).toEqual([
+      `sky ${JSON.stringify({ ...DEFAULT_SKY, moon: true })}`,
+      `sky ${JSON.stringify({ stars: false, fireflies: false, darkNight: false, moon: true, sun: false })}`,
+    ]);
+    expect(replaceState).toHaveBeenLastCalledWith(null, '', '/?debug&sky=moon');
+    expect(await koi.call('getState')).toMatchObject({ ok: true, result: { sky: { moon: true, stars: false } } });
+  });
+
+  it('carries the sky over a reseed', async () => {
+    up();
+    await koi.call('setSky', { darkNight: false });
+    void koi.call('reseed', { seed: 4 });
+    expect(mounts.at(-1)!.look.sky).toEqual({ ...DEFAULT_SKY, darkNight: false });
+  });
+
+  it('accepts only booleans for known features', async () => {
+    up();
+    expect(await koi.call('setSky', { moon: 'yes' })).toMatchObject({ ok: false, error: { code: 'invalid-args' } });
+    expect(await koi.call('setSky', { comets: true })).toMatchObject({ ok: false, error: { code: 'invalid-args' } });
+    expect(calls).toEqual([]);
+  });
+
+  it('is listed by help() and tools() with a toggle per feature', () => {
+    expect(koi.help()).toContain('setSky(args)');
+    const tool = koi.tools().find((t) => t.name === 'setSky')!;
+    expect(Object.keys(tool.inputSchema.properties)).toEqual(['stars', 'fireflies', 'darkNight', 'moon', 'sun']);
+    expect(tool.annotations).toMatchObject({ section: 'render', live: true, reflects: 'sky' });
   });
 });

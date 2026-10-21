@@ -123,3 +123,106 @@ export class PerfRecorder {
     return { fps: 1000 / mean, low1Fps: 1000 / low, frameMs: mean, maxFrameMs: recent[n - 1], ...base };
   }
 }
+
+/** Median and 90th percentile of one pass's GPU time per frame, in µs. */
+export interface PassTiming {
+  /** Frames with a result. */
+  n: number;
+  median: number;
+  p90: number;
+}
+
+export interface DrawProfile {
+  /** Per pass (program name), plus `frame`: every draw of the frame together. */
+  passes: Record<string, PassTiming>;
+  /** A disjoint event (clock change, power state) hit the run; the times may be off. */
+  disjoint: boolean;
+  /** Mean CPU ms per redraw call (submit only, timer queries included); a mean because performance.now() is coarse. */
+  cpuMs: number;
+}
+
+const quantile = (sorted: number[], q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+
+/**
+ * GPU time per pass: wraps gl.drawArrays in a TIME_ELAPSED query per draw,
+ * names each draw by the program in use, and calls `redraw` `frames` times
+ * (after a few untimed warm-up frames), yielding to the event loop every 20
+ * frames. `redraw` throws when nothing could be drawn; that error ends the run
+ * and drawArrays is restored either way. Null without
+ * EXT_disjoint_timer_query_webgl2.
+ */
+export async function profileDraws(
+  gl: WebGL2RenderingContext,
+  names: ReadonlyMap<WebGLProgram, string>,
+  redraw: () => void,
+  frames: number,
+): Promise<DrawProfile | null> {
+  const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerExt | null;
+  if (!ext) return null;
+  const yieldNow = () => new Promise((ok) => setTimeout(ok, 0));
+  for (let f = 0; f < 20; f++) redraw();
+  await yieldNow();
+  // Reading the flag clears it, so what it says afterwards covers this run only.
+  gl.getParameter(ext.GPU_DISJOINT_EXT);
+
+  const draw = gl.drawArrays;
+  /** [frame, pass, query] per draw. */
+  const pending: [number, string, WebGLQuery][] = [];
+  let frame = 0;
+  /** Inside one of our redraws: draws from anything else (a capture between yields) aren't timed. */
+  let timing = false;
+  gl.drawArrays = (mode, first, count) => {
+    const q = timing ? gl.createQuery() : null;
+    if (!q) return draw.call(gl, mode, first, count);
+    gl.beginQuery(ext.TIME_ELAPSED_EXT, q);
+    draw.call(gl, mode, first, count);
+    gl.endQuery(ext.TIME_ELAPSED_EXT);
+    const program = gl.getParameter(gl.CURRENT_PROGRAM) as WebGLProgram | null;
+    pending.push([frame, (program && names.get(program)) ?? 'other', q]);
+  };
+  let cpuMs = 0;
+  try {
+    for (; frame < frames; frame++) {
+      const t0 = performance.now();
+      timing = true;
+      try {
+        redraw();
+      } finally {
+        timing = false;
+      }
+      cpuMs += performance.now() - t0;
+      if (frame % 20 === 19) await yieldNow();
+    }
+  } catch (err) {
+    for (const [, , q] of pending) gl.deleteQuery(q);
+    throw err;
+  } finally {
+    gl.drawArrays = draw;
+  }
+
+  // Results land a few frames late; give the driver up to 2 s in all.
+  const deadline = performance.now() + 2000;
+  /** Per pass, GPU µs summed over each frame's draws of it. */
+  const sums = new Map<string, Map<number, number>>();
+  for (const [f, pass, q] of pending) {
+    while (!gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE) && performance.now() < deadline) {
+      await new Promise((ok) => setTimeout(ok, 10));
+    }
+    if (gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) {
+      const us = (gl.getQueryParameter(q, gl.QUERY_RESULT) as number) / 1e3;
+      for (const key of [pass, 'frame']) {
+        const byFrame = sums.get(key) ?? sums.set(key, new Map()).get(key)!;
+        byFrame.set(f, (byFrame.get(f) ?? 0) + us);
+      }
+    }
+    gl.deleteQuery(q);
+  }
+  const disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT) as boolean;
+
+  const passes: Record<string, PassTiming> = {};
+  for (const [pass, byFrame] of sums) {
+    const t = [...byFrame.values()].sort((a, b) => a - b);
+    passes[pass] = { n: t.length, median: quantile(t, 0.5), p90: quantile(t, 0.9) };
+  }
+  return { passes, disjoint, cpuMs: cpuMs / frames };
+}

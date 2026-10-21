@@ -5,7 +5,8 @@
 // Node 22 releases before 22.18 can import gpu.ts too.
 //
 //   npm run shot -- [query] [--size 1280x800] [--dpr 1] [--wait 2500]
-//                   [--shots 1] [--every 700] [--eval js] [--perf secs] [--out dir]
+//                   [--shots 1] [--every 700] [--eval js] [--perf secs] [--reduced-motion]
+//                   [--out dir]
 //
 //   query   demo URL query, e.g. '?seed=7&phase=0.5' or '?debug&time=fixed&phase=0.5'
 //   --eval  JS run in the page after --wait, before the shots; its result is reported.
@@ -13,12 +14,12 @@
 //           --eval 'koi.setViewport({width:800,height:600,dpr:1}).then(() => koi.reseed({seed:42})).then(() => koi.step({frames:120}))'
 //   --perf  samples requestAnimationFrame for N seconds (vsync is off, so this is
 //           real throughput); with ?debug `await koi.getPerf()` is reported too
-import { chromium } from '@playwright/test';
-import { createServer } from 'vite';
+//   --reduced-motion  emulates prefers-reduced-motion: reduce from before the page
+//           loads, so the pond runs calm (without it: no-preference)
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { assertGpu, gpuLaunchOptions } from '../test/browser/gpu.ts';
+import { launchGpu, startDemo } from './demo.mjs';
 
 const { values: opt, positionals } = parseArgs({
   allowPositionals: true,
@@ -30,6 +31,7 @@ const { values: opt, positionals } = parseArgs({
     every: { type: 'string', default: '700' },
     eval: { type: 'string' },
     perf: { type: 'string' },
+    'reduced-motion': { type: 'boolean', default: false },
     out: { type: 'string', default: 'test-results/shots' },
   },
 });
@@ -39,22 +41,26 @@ const out = path.resolve(opt.out);
 fs.mkdirSync(out, { recursive: true });
 for (const f of fs.readdirSync(out)) if (/^shot-\d+\.png$/.test(f)) fs.rmSync(path.join(out, f));
 
-const server = await createServer({
-  configFile: 'vite.demo.config.ts',
-  logLevel: 'error',
-  server: { host: '127.0.0.1', port: 0, strictPort: false, hmr: false },
-});
+let demo;
 let browser;
-const report = { url: '', renderer: '', viewport: { width, height, dpr: +opt.dpr }, shots: [], errors: [] };
+const reducedMotion = opt['reduced-motion'];
+const report = {
+  url: '',
+  renderer: '',
+  viewport: { width, height, dpr: +opt.dpr },
+  reducedMotion,
+  shots: [],
+  errors: [],
+};
 try {
-  await server.listen();
-  report.url = new URL(query.replace(/^(?=[^?/])/, '?'), server.resolvedUrls.local[0]).href;
+  demo = await startDemo();
+  report.url = demo.url(query);
 
-  browser = await chromium.launch(gpuLaunchOptions);
-  report.renderer = await assertGpu(browser);
+  ({ browser, renderer: report.renderer } = await launchGpu());
   const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: +opt.dpr });
   page.on('console', (m) => m.type() === 'error' && report.errors.push(m.text()));
   page.on('pageerror', (e) => report.errors.push(e.message));
+  await page.emulateMedia({ reducedMotion: reducedMotion ? 'reduce' : 'no-preference' });
 
   await page.goto(report.url);
   await page.waitForSelector('canvas', { timeout: 15_000 });
@@ -94,7 +100,7 @@ try {
   report.errors.push(`shot: ${e.message}`);
 } finally {
   await browser?.close();
-  await server.close();
+  await demo?.close();
 }
 console.log(JSON.stringify(report, null, 2));
 process.exitCode = report.errors.length ? 1 : 0;

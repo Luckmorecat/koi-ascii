@@ -14,6 +14,30 @@ async function openDebug(page: Page, query = ''): Promise<void> {
   await page.evaluate(() => window.koi!.ready);
 }
 
+/** Largest per-channel distance of any pixel of a PNG data URL from `rgb`. */
+function farthestFrom(page: Page, dataUrl: string, rgb: [number, number, number]): Promise<number> {
+  return page.evaluate(
+    async ([dataUrl, rgb]) => {
+      const img = new Image();
+      img.src = dataUrl;
+      await img.decode();
+      const c = new OffscreenCanvas(img.width, img.height);
+      const ctx = c.getContext('2d')!;
+      ctx.drawImage(img, 0, 0);
+      const px = ctx.getImageData(0, 0, img.width, img.height).data;
+      let far = 0;
+      for (let p = 0; p < px.length; p += 4) {
+        for (let k = 0; k < 3; k++) far = Math.max(far, Math.abs(px[p + k] - rgb[k]));
+      }
+      return far;
+    },
+    [dataUrl, rgb] as const,
+  );
+}
+
+const PAPER: [number, number, number] = [0xf3, 0xef, 0xe6];
+const MONO_BG: [number, number, number] = [0x0b, 0x0b, 0x0b];
+
 let errors: string[];
 test.beforeEach(({ page }) => {
   errors = [];
@@ -39,7 +63,7 @@ test('with ?debug: koi.ready resolves and tools() lists every tool with a schema
   await expect(page.locator('#koi-debug')).toBeVisible();
   const tools = await page.evaluate(() => window.koi!.tools());
   const names = tools.map((t) => t.name);
-  for (const n of ['getState', 'setTime', 'reseed', 'step', 'capture', 'setViewport', 'getPerf', 'setRender']) {
+  for (const n of ['getState', 'setTime', 'reseed', 'step', 'capture', 'setViewport', 'getPerf', 'profile', 'setRender', 'setPalette', 'setIntensity', 'setSky']) {
     expect(names).toContain(n);
   }
   for (const t of tools) {
@@ -114,6 +138,118 @@ test('pinned viewport + reseed + step + capture is reproducible; another seed di
   expect(r.otherSeedDiffers).toBe(true);
 });
 
+test('at dusk the fireflies replay with a seed after a reseed, and setSky turns them off', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.83');
+  const r = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.setViewport({ width: 800, height: 600, dpr: 1 });
+    const frame = async (seed: number) => {
+      await k.reseed({ seed });
+      await k.step({ frames: 150 });
+      return ((await k.capture()) as { dataUrl: string }).dataUrl;
+    };
+    const a = await frame(77);
+    const b = await frame(77);
+    await k.setSky({ fireflies: false });
+    const off = await frame(77);
+    return { same: a === b, flyless: a !== off };
+  });
+  expect(r.same).toBe(true);
+  expect(r.flyless).toBe(true);
+});
+
+test('profile times each pass, then leaves the pond running as it was', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.83');
+  const r = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    const before = (await k.getState()).frame as number;
+    const profile = await k.profile({ frames: 40 });
+    await new Promise((done) => setTimeout(done, 300));
+    const state = await k.getState();
+    return { profile, paused: state.paused as boolean, ran: (state.frame as number) > before };
+  });
+  expect(r.paused).toBe(false);
+  expect(r.ran).toBe(true);
+  if (!r.profile.gpuTimer) return expect(r.profile).toEqual({ gpuTimer: false });
+  for (const pass of ['scene', 'ascii', 'frame']) {
+    const t = r.profile.passes[pass];
+    expect(t.n, pass).toBe(40);
+    expect(t.median, pass).toBeGreaterThan(0);
+    expect(t.p90, pass).toBeGreaterThanOrEqual(t.median);
+  }
+  expect(r.profile.passes.frame.median).toBeGreaterThanOrEqual(r.profile.passes.scene.median);
+  expect(r.profile.cells.cols).toBeGreaterThan(0);
+  expect(typeof r.profile.cpuMs).toBe('number');
+});
+
+test('a second profile while one runs is refused, and a pause made meanwhile holds', async ({ page }) => {
+  await openDebug(page);
+  const r = await page.evaluate(async () => {
+    const koi = window.koi!;
+    const first = koi.call('profile', { frames: 200 });
+    const second = await koi.call('profile', { frames: 10 });
+    await koi.call('pause');
+    const done = await first;
+    const frame = (await koi.call('getState')) as { ok: true; result: { frame: number; paused: boolean } };
+    await new Promise((ok) => setTimeout(ok, 300));
+    const later = (await koi.call('getState')) as { ok: true; result: { frame: number } };
+    return { second, firstOk: done.ok, paused: frame.result.paused, still: later.result.frame === frame.result.frame };
+  });
+  expect(r.second).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+  expect(r.firstOk).toBe(true);
+  expect(r.paused).toBe(true);
+  expect(r.still).toBe(true);
+});
+
+test('a resume during a profile waits for it, and a collapsed pond fails the profile', async ({ page }) => {
+  await openDebug(page);
+  const r = await page.evaluate(async () => {
+    const koi = window.koi!;
+    await koi.call('pause');
+    // Loop frames while the profile runs and after it; a fast GPU finishes 200 redraws in ~35 ms,
+    // so a fixed wait can't tell "during" from "after".
+    const loopFrames = { during: 0, after: 0 };
+    let profiling = true;
+    koi.on('frame', (e) => {
+      if (!e.stepped) loopFrames[profiling ? 'during' : 'after']++;
+    });
+    const profile = koi.call('profile', { frames: 200 }).finally(() => (profiling = false));
+    await koi.call('resume');
+    const done = await profile;
+    await new Promise((ok) => setTimeout(ok, 300));
+    await koi.call('setViewport', { width: 16, height: 16 });
+    document.querySelector<HTMLElement>('#pond')!.style.display = 'none';
+    const collapsed = await koi.call('profile', { frames: 10 });
+    return { loopFrames, done, collapsed };
+  });
+  expect(r.loopFrames.during).toBe(0);
+  expect(r.done).toMatchObject({ ok: true, result: { gpuTimer: expect.any(Boolean) } });
+  expect(r.loopFrames.after).toBeGreaterThan(0);
+  expect(r.collapsed).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+});
+
+test('during a profile, state-changing tools are refused and a capture still works', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.5');
+  const r = await page.evaluate(async () => {
+    const koi = window.koi!;
+    const alone = (await koi.call('profile', { frames: 200 })) as { ok: true; result: any };
+    const profile = koi.call('profile', { frames: 200 });
+    const step = await koi.call('step');
+    const palette = await koi.call('setPalette', { palette: 'mono' });
+    const captures: boolean[] = [];
+    for (let i = 0; i < 20; i++) {
+      captures.push((await koi.call('capture')).ok);
+      await new Promise((ok) => setTimeout(ok, 0));
+    }
+    const busy = (await profile) as { ok: true; result: any };
+    return { step, palette, captures, alone: alone.result, busy: busy.result };
+  });
+  expect(r.step).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+  expect(r.palette).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+  expect(r.captures.every(Boolean)).toBe(true);
+  if (r.busy.gpuTimer) expect(Object.keys(r.busy.passes).sort()).toEqual(Object.keys(r.alone.passes).sort());
+});
+
 test('step pauses and advances the frame counter exactly', async ({ page }) => {
   await openDebug(page);
   const r = await page.evaluate(async () => {
@@ -152,4 +288,116 @@ test('context loss and restore each emit a change event', async ({ page }) => {
     { tool: null, contextLost: true },
     { tool: null, contextLost: false },
   ]);
+});
+
+test('?palette and ?intensity work without ?debug', async ({ page }) => {
+  await page.goto(`${DEMO}?palette=paper&intensity=0`);
+  const canvas = page.locator('#pond canvas');
+  await canvas.waitFor({ timeout: 15_000 });
+  // Intensity 0: nothing but the paper background, once the first frame is up.
+  await expect
+    .poll(async () => farthestFrom(page, `data:image/png;base64,${(await canvas.screenshot()).toString('base64')}`, PAPER), {
+      timeout: 15_000,
+    })
+    .toBeLessThanOrEqual(1);
+});
+
+test('setPalette and setIntensity: URL, state, panel controls and a reseed', async ({ page }) => {
+  await openDebug(page, '&palette=paper&intensity=0');
+  const capture = () => page.evaluate(async () => ((await (window.koi as unknown as Tools).capture()) as { dataUrl: string }).dataUrl);
+  expect(await page.evaluate(async () => (await (window.koi as unknown as Tools).getState()).render)).toMatchObject({
+    palette: 'paper',
+    intensity: 0,
+  });
+  expect(await farthestFrom(page, await capture(), PAPER)).toBeLessThanOrEqual(1);
+
+  // The panel's controls show the state and drive the tools.
+  const select = page.locator('#koi-debug select').filter({ has: page.locator('option[value="phosphor"]') });
+  await expect(select).toHaveValue('paper');
+  await select.selectOption('mono');
+  await expect.poll(() => new URL(page.url()).searchParams.get('palette')).toBe('mono');
+  expect(await farthestFrom(page, await capture(), MONO_BG)).toBeLessThanOrEqual(1);
+
+  // The panel's intensity slider drives setIntensity live.
+  const slider = page.locator('#koi-debug label').filter({ hasText: 'intensity' }).locator('input[type=range]');
+  await expect(slider).toHaveValue('0');
+  await slider.fill('0.35');
+  await expect.poll(() => new URL(page.url()).searchParams.get('intensity')).toBe('0.35');
+  expect(await page.evaluate(async () => (await (window.koi as unknown as Tools).getState()).render)).toMatchObject({
+    palette: 'mono',
+    intensity: 0.35,
+  });
+
+  // Both survive a reseed, and a non-zero intensity draws the pond again.
+  const r = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.reseed({ seed: 5 });
+    return (await k.getState()).render;
+  });
+  expect(r).toMatchObject({ palette: 'mono', intensity: 0.35 });
+  expect(new URL(page.url()).searchParams.get('intensity')).toBe('0.35');
+  expect(await farthestFrom(page, await capture(), MONO_BG)).toBeGreaterThan(10);
+});
+
+test('setSky: URL, state, panel toggles and a reseed', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.95&sky=none');
+  expect(await page.evaluate(async () => (await (window.koi as unknown as Tools).getState()).sky)).toEqual({
+    stars: false,
+    fireflies: false,
+    darkNight: false,
+    moon: false,
+    sun: false,
+  });
+
+  // The panel has a toggle per feature; the darkNight one drives setSky live.
+  const box = page.locator('#koi-debug label').filter({ hasText: 'darkNight' }).locator('input[type=checkbox]');
+  await expect(box).not.toBeChecked();
+  await box.check();
+  await expect.poll(() => new URL(page.url()).searchParams.get('sky')).toBe('darkNight');
+
+  const sky = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.setSky({ stars: true, fireflies: true });
+    await k.reseed({ seed: 5 });
+    return (await k.getState()).sky;
+  });
+  // Back to the defaults: the URL drops the param, and a reseed keeps the sky.
+  expect(sky).toEqual({ stars: true, fireflies: true, darkNight: true, moon: false, sun: false });
+  expect(new URL(page.url()).searchParams.get('sky')).toBeNull();
+  await expect(box).toBeChecked();
+});
+
+test('setSky and setPalette together survive a context loss and restore', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.95&seed=42');
+  await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.setSky({ moon: true, stars: false });
+    await k.setPalette({ palette: 'paper' });
+    const ext = document.querySelector<HTMLCanvasElement>('#pond canvas')!.getContext('webgl2')!.getExtension('WEBGL_lose_context')!;
+    Object.assign(window, { koiLoseContext: ext });
+    ext.loseContext();
+  });
+  const lost = () => page.evaluate(async () => (await (window.koi as unknown as Tools).getState()).contextLost);
+  await expect.poll(lost).toBe(true);
+  await page.evaluate(() => (window as unknown as { koiLoseContext: WEBGL_lose_context }).koiLoseContext.restoreContext());
+  await expect.poll(lost).toBe(false);
+
+  const state = await page.evaluate(async () => (await (window.koi as unknown as Tools).getState()) as { sky: unknown; render: { palette: string } });
+  expect(state.sky).toEqual({ stars: false, fireflies: true, darkNight: true, moon: true, sun: false });
+  expect(state.render.palette).toBe('paper');
+  const params = new URL(page.url()).searchParams;
+  expect(params.get('sky')).toBe('fireflies,darkNight,moon');
+  expect(params.get('palette')).toBe('paper');
+  await expect(page.locator('#koi-debug label').filter({ hasText: 'moon' }).locator('input[type=checkbox]')).toBeChecked();
+
+  // The restored renderer draws the moon: turning it off changes the frame.
+  const [on, off] = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.step();
+    const on = ((await k.capture()) as { dataUrl: string }).dataUrl;
+    await k.setSky({ moon: false });
+    const off = ((await k.capture()) as { dataUrl: string }).dataUrl;
+    return [on, off];
+  });
+  expect(on).not.toBe(off);
 });
