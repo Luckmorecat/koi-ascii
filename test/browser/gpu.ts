@@ -4,11 +4,17 @@
 // erasable TypeScript: type-only imports, no enums).
 import type { Browser, LaunchOptions } from '@playwright/test';
 
+// The repo has no @types/node; this is all this file needs of it.
+declare const process: { platform: string };
+
+// ANGLE backend that reaches the hardware driver in headless mode. Verified on
+// Linux (Mesa); macOS only allows Metal, Windows defaults to D3D11.
+const ANGLE_BACKEND: Record<string, string> = { linux: 'gl-egl', darwin: 'metal', win32: 'd3d11' };
+
 export const gpuLaunchOptions: LaunchOptions = {
   args: [
-    // ANGLE on EGL picks up the system GPU driver in headless mode.
     '--use-gl=angle',
-    '--use-angle=gl-egl',
+    `--use-angle=${ANGLE_BACKEND[process.platform] ?? 'default'}`,
     '--ignore-gpu-blocklist',
     // No CPU fallback: with a bad setup WebGL2 is missing and runs fail loudly.
     '--disable-software-rasterizer',
