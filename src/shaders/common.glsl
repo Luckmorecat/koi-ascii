@@ -10,6 +10,7 @@ precision highp sampler2D;
 #define M_EDGE 4
 #define M_BODY 5
 #define M_EYE 6
+#define M_GLINT 7
 
 #define PI 3.14159265
 #define TAU 6.28318531

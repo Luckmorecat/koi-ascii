@@ -12,7 +12,19 @@ uniform int uOrder[MAX_FISH];
 uniform vec2 uCell;
 uniform vec2 uOriginCss; // world position of the grid's top-left corner
 uniform float uTime;
-uniform vec2 uShadow;
+// Time-of-day lighting, derived on the CPU from the phase (lighting.ts).
+// Light space: x right, y down the screen, z up toward the viewer.
+uniform vec3 uLightDir;  // unit, toward the sun or moon
+uniform vec3 uLightCol;  // direct light, intensity included
+uniform vec3 uAmbient;   // sky light on the fish
+uniform vec3 uWaterTint; // water, ripples and trails
+uniform vec3 uSky;       // sky reflection added to lit water
+uniform float uGlint;
+uniform float uCaustic;
+uniform float uFloor;    // minimum light per channel on fish (night legibility)
+uniform vec2 uShadow;    // shadow offset, px, away from the light
+uniform float uShadowAlpha;
+uniform float uCalm;     // 1 under reduced motion: flicker slows further
 
 layout(location = 0) out vec4 oColor; // rgb colour, a density (for the raw view)
 layout(location = 1) out vec4 oInfo;  // r glyph index, g cell class
@@ -34,6 +46,36 @@ const vec3 SUMI_RIM = vec3(0.74, 0.77, 0.82);
 const float RIPPLE_GAIN = 28.0;
 // Refraction offset (px) per unit of surface slope.
 const float REFRACT = 220.0;
+// Surface tilt (normal.xy / normal.z) per unit of RIPPLE_GAIN-scaled slope.
+// A full crest tilts ~63°, so a sun ~6° above the horizon is mirrored
+// (half vector ~42° off vertical) at about half a crest; noon needs only
+// ~13°, the rings' soft flanks.
+const float GLINT_TILT = 2.0;
+// Flicker rate under reduced motion, on top of the pond's own 0.75 slowdown.
+const float CALM_FLICKER = 0.3;
+// Body specular: broad, so the highlight runs along the back.
+const float SPEC_POW = 18.0;
+
+float flicker() { return mix(1.0, CALM_FLICKER, uCalm); }
+
+// Seen from above, a fish is mostly back: a sun near the horizon would barely
+// reach it. Diffuse light and glyph weight therefore use the light's azimuth
+// at no less than ~30° elevation; the highlight and glints keep the true
+// direction, so they still slide to the lit edge as the sun sinks.
+vec3 diffuseDir() {
+  return normalize(vec3(uLightDir.xy, max(uLightDir.z, 0.5)));
+}
+
+// Light falling on a surface with unit normal n: sky + sun/moon, never below
+// the night floor (per channel, which also neutralises the moon's blue).
+vec3 lightOn(vec3 n) {
+  return max(uAmbient + uLightCol * max(dot(n, diffuseDir()), 0.0), vec3(uFloor));
+}
+
+// The light's own hue at full brightness, for glints and highlights.
+vec3 lightHue() {
+  return uLightCol / max(max(uLightCol.r, max(uLightCol.g, uLightCol.b)), 1e-3);
+}
 
 struct Cell {
   vec3 col;
@@ -71,6 +113,8 @@ float coverage(float d, vec2 n) {
   float span = abs(n.x) * uCell.x + abs(n.y) * uCell.y;
   return clamp(0.5 - d / span, 0.0, 1.0);
 }
+
+float sq(float x) { return x * x; }
 
 // ---------------------------------------------------------------- glyphs
 
@@ -164,9 +208,10 @@ Cell water(vec2 p, float h, vec2 g) {
   float shimmer = 0.8 + 0.6 * fbm(p * 0.0016 + vec2(uTime * 0.012, -uTime * 0.008));
   float lit = smoothstep(0.45, 0.95, caustic(p * 0.011 + g * 3.0, uTime * 0.45) * shimmer);
   c.mat = M_WATER;
-  c.dens = max(mote * 0.5, lit);
+  // Fewer floor caustics as the light weakens; motes stay.
+  c.dens = max(mote * 0.5, lit * mix(0.6, 1.0, uCaustic));
   // Kept dimmer than ripples and trails, which share the light glyphs.
-  c.col = mix(WATER_DIM, WATER_LIT, 0.6 * lit);
+  c.col = mix(WATER_DIM, WATER_LIT, 0.6 * lit * min(uCaustic, 1.0)) * uWaterTint + uSky;
   c.aux = hash12(mp + 3.1);
   c.dir = vec2(1.0, 0.0);
   c.style = 0.0;
@@ -175,9 +220,38 @@ Cell water(vec2 p, float h, vec2 g) {
   if (rip > 0.25) {
     c.mat = M_RIPPLE;
     c.dens = rip;
-    c.col = mix(WATER_LIT, RIPPLE_COL, rip);
+    c.col = mix(WATER_LIT, RIPPLE_COL, rip) * uWaterTint + uSky;
     c.dir = lineDir(vec2(-g.y, g.x)); // along the crest
     c.aux = h > 0.0 ? 1.0 : 0.0;
+  }
+
+  // Glints: the cell mirrors the sun/moon to the viewer (looking straight
+  // down) when its surface tilt matches the half vector's. Flat water never
+  // glints; only ripples do.
+  vec3 H = normalize(uLightDir + vec3(0.0, 0.0, 1.0));
+  vec2 az = normalize(uLightDir.xy + vec2(1e-5, 0.0));
+  vec2 across = vec2(-az.y, az.x);
+  float low = 1.0 - uLightDir.z; // ~0.1 at noon, ~0.9 for a setting sun
+  vec2 e = -g * RIPPLE_GAIN * GLINT_TILT - H.xy / H.z;
+  float ea = dot(e, az);
+  float ec = dot(e, across);
+  // A low light is mirrored by a wider spread of slopes across its direction,
+  // so glints run further along the crests that face it.
+  float gl = exp(-sq(ea / (0.3 + 0.4 * low)) - sq(ec / (0.3 + 0.8 * low)));
+  gl *= smoothstep(0.06, 0.25, length(g) * RIPPLE_GAIN);
+  // Twinkle on a grid stretched along the light: with a low sun neighbouring
+  // cells in that direction flash together, so glints read as long dashes.
+  vec2 r = vec2(dot(p, az), dot(p, across)) / (max(uCell.x, uCell.y) * vec2(1.0 + 5.0 * low, 1.0));
+  float tw = hash12(floor(r) + floor(uTime * 6.0 * flicker()) * 0.613);
+  gl *= uGlint * (0.45 + 1.1 * tw);
+  if (gl > 0.45) {
+    c.mat = M_GLINT;
+    c.dens = min(gl, 1.0);
+    // Full brightness in the light's hue whatever the hour: a mirror image of
+    // the sun or moon, not lit water.
+    c.col = mix(lightHue(), vec3(1.0), 0.4) * mix(0.8, 1.0, smoothstep(0.45, 1.0, gl));
+    c.dir = lineDir(az);
+    c.aux = low;
   }
   return c;
 }
@@ -234,8 +308,6 @@ float tailSD(int f, vec2 q, vec4 fin) {
 
 // ---------------------------------------------------------------- markings
 
-float sq(float x) { return x * x; }
-
 // Kohaku: porcelain white with large hi (red) patches over the back, a red
 // head patch, clean white nose and tail root.
 vec3 kohaku(float u, float v, float seed) {
@@ -265,7 +337,7 @@ vec3 ogon(float u, float v, float seed, out float glint) {
   vec2 sc = vec2(u * 26.0, v * 4.0 + 4.0);
   vec2 id = floor(vec2(sc.x + 0.5 * mod(floor(sc.y), 2.0), sc.y));
   float ph = hash12(id + seed);
-  float twinkle = pow(0.5 + 0.5 * sin(uTime * 2.3 + ph * TAU + u * 7.0), 14.0) * step(0.55, ph);
+  float twinkle = pow(0.5 + 0.5 * sin(uTime * 2.3 * flicker() + ph * TAU + u * 7.0), 14.0) * step(0.55, ph);
   float band = exp(-sq((v - 0.35 * sin(uTime * 0.6 + u * 4.0 + seed)) * 2.2));
   glint = max(twinkle, band * 0.6);
   vec3 base = mix(OGON_GOLD * vec3(0.86, 0.8, 0.72), OGON_GOLD, 1.0 - abs(v));
@@ -296,7 +368,7 @@ float shadow(int f, vec2 p) {
   if (!inBox(q, F(f, T_BBOX), blur)) return 0.0;
   float d = min(polyline(f, 0, J_BODY - 1, q).d,
                 polyline(f, J_BODY - 1, J_TAIL, q).d + max(uCell.x, uCell.y) * 0.5);
-  return (1.0 - smoothstep(-blur, blur, d)) * (0.95 - 0.35 * lift);
+  return (1.0 - smoothstep(-blur, blur, d)) * (0.95 - 0.35 * lift) * uShadowAlpha;
 }
 
 void trails(vec2 p, inout Cell c) {
@@ -344,7 +416,7 @@ void trails(vec2 p, inout Cell c) {
     col = vec3(0.82, 0.93, 0.95);
   } else {
     // Gold dust that twinkles.
-    float tw = hash12(cell + floor(uTime * 7.0) * 0.731);
+    float tw = hash12(cell + floor(uTime * 7.0 * flicker()) * 0.731);
     best *= step(0.5, tw) * 1.2;
     col = vec3(1.0, 0.85, 0.45);
   }
@@ -352,7 +424,7 @@ void trails(vec2 p, inout Cell c) {
   c.mat = M_TRAIL;
   c.dens = min(best, 1.0);
   // Silk keeps its warm hue and only dims as it fades; the others fade into the water.
-  c.col = bestVariety == V_KOHAKU ? col * (0.6 + 0.4 * smoothstep(0.1, 0.6, best)) : mix(WATER_LIT, col, smoothstep(0.1, 0.6, best));
+  c.col = (bestVariety == V_KOHAKU ? col * (0.6 + 0.4 * smoothstep(0.1, 0.6, best)) : mix(WATER_LIT, col, smoothstep(0.1, 0.6, best))) * uWaterTint;
   c.dir = lineDir(bestDir);
   c.aux = 0.0;
   c.style = float(bestVariety);
@@ -374,9 +446,12 @@ void drawFish(int f, vec2 p, vec2 refr, inout Cell c) {
   vec2 q = p + refr * (0.5 + depth);
   if (!inBox(q, F(f, T_BBOX), max(uCell.x, uCell.y) * 1.5)) return;
   float fog = 0.55 * depth;
+  vec3 fogCol = WATER_DIM * uWaterTint;
   float fade = 1.0 - 0.3 * depth;
   float style = float(variety);
   vec4 fin = F(f, T_FIN);
+  // Fins are thin and lie nearly flat: lit as if facing straight up.
+  vec3 flatLight = lightOn(vec3(0.0, 0.0, 1.0));
 
   // Fin normals come from a numeric gradient over half a cell, so outline
   // glyphs follow the fin's actual rim (fork and tip included).
@@ -395,7 +470,7 @@ void drawFish(int f, vec2 p, vec2 refr, inout Cell c) {
     vec2 n = normalize(gr + 1e-6);
     float cv = coverage(d, n);
     if (cv > 0.25) {
-      c.col = mix(pectoralColor(variety, t), WATER_DIM, fog);
+      c.col = mix(pectoralColor(variety, t) * flatLight, fogCol, fog);
       c.aux = 0.0;
       c.style = style;
       if (cv < 0.8) {
@@ -421,7 +496,7 @@ void drawFish(int f, vec2 p, vec2 refr, inout Cell c) {
     float tcv = coverage(td, n);
     if (tcv > 0.25) {
       Hit th = polyline(f, J_BODY - 1, J_TAIL, q);
-      c.col = mix(tailColor(variety, th.u, th.v, seed), WATER_DIM, fog);
+      c.col = mix(tailColor(variety, th.u, th.v, seed) * flatLight, fogCol, fog);
       c.aux = 0.0;
       c.style = style;
       if (tcv < 0.8) {
@@ -446,8 +521,29 @@ void drawFish(int f, vec2 p, vec2 refr, inout Cell c) {
     vec3 bc = variety == V_KOHAKU ? kohaku(bh.u, bh.v, seed)
             : variety == V_SHOWA ? showa(bh.u, bh.v, seed, sumiAmt)
             : ogon(bh.u, bh.v, seed, glint);
-    float shade = 1.0 - 0.45 * bh.v * bh.v;
-    c.col = mix(bc * (0.8 + 0.2 * shade), WATER_DIM, fog);
+    // The body as a cylinder seen from above: |v| = 1 at the silhouette.
+    // 0.92 keeps the edge from turning fully sideways (a koi's back is broad).
+    float a = min(abs(bh.v), 1.0) * 0.92;
+    vec3 N = vec3(bh.n * a, sqrt(1.0 - a * a));
+    float ndl = dot(N, diffuseDir());
+    vec3 lit = lightOn(N);
+    // Highlight along the back where the normal meets the half vector; it
+    // slides across the back as the light moves. Sumi is lacquer-glossy and
+    // ogon metallic (tinted gold).
+    vec3 H = normalize(uLightDir + vec3(0.0, 0.0, 1.0));
+    float spec = pow(max(dot(N, H), 0.0), SPEC_POW);
+    vec3 hue = lightHue() * length(uLightCol) * 0.82; // ~1 at noon, dim at night
+    vec3 hi = variety == V_OGON ? hue * OGON_GOLD * 0.9 : hue * (variety == V_SHOWA ? 0.32 + 0.25 * sumiAmt : 0.3);
+    // Rim on the flank away from the light, lit by the light wrapping round.
+    vec2 az = normalize(uLightDir.xy + vec2(1e-5, 0.0));
+    float rim = a * a * a * max(-dot(bh.n, az), 0.0) * (0.35 + 0.65 * (1.0 - uLightDir.z));
+    // Caustics on the back, only for cells this fish covers. Shallower fish
+    // catch sharper, brighter ones; the pattern slides as the fish swims.
+    float cst = smoothstep(0.5, 0.95, caustic(q * 0.014 + refr * 0.012 + seed, uTime * 0.45));
+    vec3 caust = uLightCol * cst * uCaustic * 0.4 * max(ndl, 0.0) * (1.0 - depth);
+    c.col = mix(bc * lit + hi * spec + uLightCol * rim * 0.6 + caust, fogCol, fog);
+    // Glyph weight follows the light too, so the lit flank is heavier.
+    float shade = mix(0.58, 1.05, smoothstep(-0.2, 0.9, ndl)) + 0.25 * spec;
     c.style = style;
     if (bcv > 0.8) {
       // Glyph weight follows perceived lightness, so markings read as texture
@@ -462,7 +558,7 @@ void drawFish(int f, vec2 p, vec2 refr, inout Cell c) {
       c.dens = bcv;
       c.dir = cellNormal(bh.n);
       c.aux = 0.0;
-      c.col = mix(c.col, mix(SUMI_RIM, WATER_DIM, fog), 0.65 * sumiAmt);
+      c.col = mix(c.col, mix(SUMI_RIM * lit, fogCol, fog), 0.65 * sumiAmt);
     }
   }
 
@@ -475,7 +571,7 @@ void drawFish(int f, vec2 p, vec2 refr, inout Cell c) {
     vec2 de = abs(p + refrAt(e) * (0.5 + depth) - e);
     if (length(q - e) < P0.z || (de.x < uCell.x * 0.5 && de.y < uCell.y * 0.5)) {
       c.mat = M_EYE;
-      c.col = mix(EYE_COL, WATER_DIM, fog * 0.5);
+      c.col = mix(EYE_COL * max(flatLight, vec3(0.75)), fogCol, fog * 0.5);
       c.dens = 1.0;
       c.aux = 0.0;
       c.style = style;
@@ -515,6 +611,11 @@ int pickGlyph(Cell c, ivec2 cell) {
     return BODY_RAMP[clamp(int(floor(x + 0.5)), 0, BODY_N - 1)];
   }
   if (c.mat == M_EYE) return G_O;
+  if (c.mat == M_GLINT) {
+    // High light: star bursts. Low light: dashes along its direction.
+    if (aux > 0.55) return dens > 0.6 ? lineGlyph(c.dir, dens > 0.85 ? G_EQUALS : G_MINUS, G_PIPE) : G_DOT;
+    return dens > 0.75 ? G_STAR : G_PLUS;
+  }
   return G_SPACE;
 }
 

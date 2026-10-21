@@ -9,6 +9,7 @@ import { buildAtlas, glyphDefines, type Atlas } from './glyphs';
 import { FISH_TEXELS, MAX_DROPS, MAX_FISH, layoutDefines } from './koi/layout';
 import { varietyDefines } from './koi/varieties';
 import { pondUnit, type Pond } from './pond';
+import { lightingAt, type Lighting } from './lighting';
 
 /** World px per ripple simulation texel. */
 const RIPPLE_PX = 5;
@@ -34,6 +35,8 @@ export class Renderer {
   rows = 0;
   /** Time of day for the current frame; drives the lighting. */
   phase = 0;
+  /** Lighting derived from `phase` for the current frame (the glow pass reads glowStrength). */
+  light: Lighting = lightingAt(0);
 
   private readonly gl: WebGL2RenderingContext;
   private readonly fontFamily: string;
@@ -158,6 +161,7 @@ export class Renderer {
   /** `phase` is the time of day in [0, 1), 0 = midnight (see sky.ts). */
   render(pond: Pond, dt: number, phase: number): void {
     this.phase = phase;
+    const light = (this.light = lightingAt(phase));
     const gl = this.gl;
     const atlas = this.atlas;
     const scene = this.scene;
@@ -206,7 +210,19 @@ export class Renderer {
       .vec2('uOriginCss', this.originX / this.dpr, this.originY / this.dpr)
       // Wraps every ~18 h; float32 keeps ~8 ms resolution at the top of the range.
       .float('uTime', pond.time % 65536)
-      .vec2('uShadow', unit * 0.045, unit * 0.07);
+      // Time-of-day lighting, all derived on the CPU from the phase.
+      .vec3('uLightDir', ...light.dir)
+      .vec3('uLightCol', ...light.color)
+      .vec3('uAmbient', ...light.ambient)
+      .vec3('uWaterTint', ...light.water)
+      .vec3('uSky', ...light.sky)
+      .float('uGlint', light.glint)
+      .float('uCaustic', light.caustic)
+      .float('uFloor', light.floor)
+      .vec2('uShadow', unit * light.shadow[0], unit * light.shadow[1])
+      .float('uShadowAlpha', light.shadowAlpha)
+      // Reduced motion: flicker (ogon twinkle, water glints) runs slower still.
+      .float('uCalm', pond.calm ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // 3. Glyphs to the screen.
