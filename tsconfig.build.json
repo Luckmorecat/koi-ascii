@@ -1,0 +1,13 @@
+{
+  // Library declarations only. tsc writes one .d.ts per source file here;
+  // scripts/copy-types.mjs ships just index.d.ts, which is self-contained.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "src",
+    "outDir": "node_modules/.cache/koi-ascii-types"
+  },
+  "include": ["src"]
+}

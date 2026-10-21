@@ -6,12 +6,11 @@ body {
   background: #06131a;
 }
 
+/* The pond's container; koi-ascii fills it with a canvas. */
 #pond {
-  display: block;
   width: 100vw;
   height: 100vh;
   height: 100dvh;
-  touch-action: none;
 }
 
 #fallback {

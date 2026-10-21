@@ -1,5 +1,4 @@
-import { DAY_PARTS, dayPartAt, type DayPart } from './lighting';
-import { LoopSource, MAX_CYCLE_S, MIN_CYCLE_S, type Sky } from './sky';
+import { DAY_PARTS, dayPartAt, LoopSource, MAX_CYCLE_S, MIN_CYCLE_S, type DayPart, type Sky } from '../src/internal';
 
 /** Frames kept for the graph and the 1 % low. */
 const HISTORY = 240;
@@ -172,7 +171,9 @@ class SkyControls {
       this.part = part;
       this.ticks.forEach((t, i) => t.classList.toggle('on', DAY_PARTS[i] === part));
     }
-    this.readout.textContent = `${phase.toFixed(3)} ${clock(phase)} ${part.name} · ${this.sky.source.kind}`;
+    // The library calls a held phase 'fixed'; the overlay keeps the URL's name for it.
+    const kind = this.sky.source.kind === 'fixed' ? 'slider' : this.sky.source.kind;
+    this.readout.textContent = `${phase.toFixed(3)} ${clock(phase)} ${part.name} · ${kind}`;
   }
 }
 
