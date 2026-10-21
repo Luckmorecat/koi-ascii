@@ -63,7 +63,7 @@ test('with ?debug: koi.ready resolves and tools() lists every tool with a schema
   await expect(page.locator('#koi-debug')).toBeVisible();
   const tools = await page.evaluate(() => window.koi!.tools());
   const names = tools.map((t) => t.name);
-  for (const n of ['getState', 'setTime', 'reseed', 'step', 'capture', 'setViewport', 'getPerf', 'setRender', 'setPalette', 'setIntensity', 'setSky']) {
+  for (const n of ['getState', 'setTime', 'reseed', 'step', 'capture', 'setViewport', 'getPerf', 'profile', 'setRender', 'setPalette', 'setIntensity', 'setSky']) {
     expect(names).toContain(n);
   }
   for (const t of tools) {
@@ -156,6 +156,98 @@ test('at dusk the fireflies replay with a seed after a reseed, and setSky turns 
   });
   expect(r.same).toBe(true);
   expect(r.flyless).toBe(true);
+});
+
+test('profile times each pass, then leaves the pond running as it was', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.83');
+  const r = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    const before = (await k.getState()).frame as number;
+    const profile = await k.profile({ frames: 40 });
+    await new Promise((done) => setTimeout(done, 300));
+    const state = await k.getState();
+    return { profile, paused: state.paused as boolean, ran: (state.frame as number) > before };
+  });
+  expect(r.paused).toBe(false);
+  expect(r.ran).toBe(true);
+  if (!r.profile.gpuTimer) return expect(r.profile).toEqual({ gpuTimer: false });
+  for (const pass of ['scene', 'ascii', 'frame']) {
+    const t = r.profile.passes[pass];
+    expect(t.n, pass).toBe(40);
+    expect(t.median, pass).toBeGreaterThan(0);
+    expect(t.p90, pass).toBeGreaterThanOrEqual(t.median);
+  }
+  expect(r.profile.passes.frame.median).toBeGreaterThanOrEqual(r.profile.passes.scene.median);
+  expect(r.profile.cells.cols).toBeGreaterThan(0);
+  expect(typeof r.profile.cpuMs).toBe('number');
+});
+
+test('a second profile while one runs is refused, and a pause made meanwhile holds', async ({ page }) => {
+  await openDebug(page);
+  const r = await page.evaluate(async () => {
+    const koi = window.koi!;
+    const first = koi.call('profile', { frames: 200 });
+    const second = await koi.call('profile', { frames: 10 });
+    await koi.call('pause');
+    const done = await first;
+    const frame = (await koi.call('getState')) as { ok: true; result: { frame: number; paused: boolean } };
+    await new Promise((ok) => setTimeout(ok, 300));
+    const later = (await koi.call('getState')) as { ok: true; result: { frame: number } };
+    return { second, firstOk: done.ok, paused: frame.result.paused, still: later.result.frame === frame.result.frame };
+  });
+  expect(r.second).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+  expect(r.firstOk).toBe(true);
+  expect(r.paused).toBe(true);
+  expect(r.still).toBe(true);
+});
+
+test('a resume during a profile waits for it, and a collapsed pond fails the profile', async ({ page }) => {
+  await openDebug(page);
+  const r = await page.evaluate(async () => {
+    const koi = window.koi!;
+    await koi.call('pause');
+    // Loop frames while the profile runs and after it; a fast GPU finishes 200 redraws in ~35 ms,
+    // so a fixed wait can't tell "during" from "after".
+    const loopFrames = { during: 0, after: 0 };
+    let profiling = true;
+    koi.on('frame', (e) => {
+      if (!e.stepped) loopFrames[profiling ? 'during' : 'after']++;
+    });
+    const profile = koi.call('profile', { frames: 200 }).finally(() => (profiling = false));
+    await koi.call('resume');
+    const done = await profile;
+    await new Promise((ok) => setTimeout(ok, 300));
+    await koi.call('setViewport', { width: 16, height: 16 });
+    document.querySelector<HTMLElement>('#pond')!.style.display = 'none';
+    const collapsed = await koi.call('profile', { frames: 10 });
+    return { loopFrames, done, collapsed };
+  });
+  expect(r.loopFrames.during).toBe(0);
+  expect(r.done).toMatchObject({ ok: true, result: { gpuTimer: expect.any(Boolean) } });
+  expect(r.loopFrames.after).toBeGreaterThan(0);
+  expect(r.collapsed).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+});
+
+test('during a profile, state-changing tools are refused and a capture still works', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.5');
+  const r = await page.evaluate(async () => {
+    const koi = window.koi!;
+    const alone = (await koi.call('profile', { frames: 200 })) as { ok: true; result: any };
+    const profile = koi.call('profile', { frames: 200 });
+    const step = await koi.call('step');
+    const palette = await koi.call('setPalette', { palette: 'mono' });
+    const captures: boolean[] = [];
+    for (let i = 0; i < 20; i++) {
+      captures.push((await koi.call('capture')).ok);
+      await new Promise((ok) => setTimeout(ok, 0));
+    }
+    const busy = (await profile) as { ok: true; result: any };
+    return { step, palette, captures, alone: alone.result, busy: busy.result };
+  });
+  expect(r.step).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+  expect(r.palette).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+  expect(r.captures.every(Boolean)).toBe(true);
+  if (r.busy.gpuTimer) expect(Object.keys(r.busy.passes).sort()).toEqual(Object.keys(r.alone.passes).sort());
 });
 
 test('step pauses and advances the frame counter exactly', async ({ page }) => {

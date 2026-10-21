@@ -7,7 +7,7 @@ import { koiPalettes, type KoiPond, type KoiPondError, type KoiPondPaletteName, 
 import { attachHooks, DAY_PARTS, dayPartAt, LoopSource, MAX_CYCLE_S, MIN_CYCLE_S, type PondCore } from '../../src/internal';
 import { SKY_FEATURES, type SkyFeature } from '../../src/sky-features';
 import { MAX_SEED, sceneTime, writeScene, type PondLook, type SceneState } from '../scene';
-import { PerfRecorder } from './perf';
+import { PerfRecorder, profileDraws, type PassTiming } from './perf';
 import { describeProp, validate, type ObjectSchema } from './schema';
 
 export type ErrorCode = 'unknown-tool' | 'invalid-args' | 'not-ready' | 'context-lost' | 'pond-failed' | 'internal';
@@ -113,6 +113,8 @@ export class ToolFailure extends Error {
 }
 
 const invalid = (path: string, why: string) => new ToolFailure('invalid-args', `${path}: ${why}`);
+/** The tools that change state yet may run during koi.profile: they don't change what it measures. */
+const WHILE_PROFILING = new Set(['pause', 'resume', 'setPanel']);
 const NO_ARGS: ObjectSchema = { type: 'object', properties: {}, additionalProperties: false };
 
 /** Phase as a clock time, 0 → 00:00, 0.5 → 12:00. */
@@ -185,6 +187,7 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
   const listeners: { [K in keyof Events]: Set<(e: Events[K]) => void> } = { change: new Set(), frame: new Set() };
   const perf = new PerfRecorder();
   let paused = false;
+  let profiling = false;
   let viewport: { width?: number; height?: number; dpr?: number } | null = null;
   let current: Mount;
   let interval = 0;
@@ -470,6 +473,65 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
       },
     },
     {
+      name: 'profile',
+      description:
+        'GPU time per pass: pauses, redraws the current frame `frames` times with a timer query around every ' +
+        'draw (EXT_disjoint_timer_query_webgl2), then restores the pause state. Returns per pass (scene, glow, ' +
+        'ascii, fly …; frame is all of them) the median and p90 GPU µs per frame with n, plus disjoint (a GPU ' +
+        'clock event spoiled the run), cells, canvas size, GPU string and cpuMs (mean submit time per redraw). A ' +
+        "redraw doesn't advance time, so the ripple sim isn't in it. { gpuTimer: false } without the extension. " +
+        'Compare revisions with `npm run perf`.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          frames: { type: 'integer', minimum: 1, maximum: 5000, default: 400, description: 'Timed redraws.' },
+        },
+        additionalProperties: false,
+      },
+      annotations: { section: 'perf', readOnly: true },
+      needs: 'renderer',
+      run: async (args) => {
+        const c = core('renderer');
+        const r = c.renderer!;
+        // The renderer's programs, by field name: sceneProg → scene.
+        const names = new Map<WebGLProgram, string>();
+        for (const [key, value] of Object.entries(r)) {
+          const handle = (value as { handle?: unknown } | null)?.handle;
+          if (key.endsWith('Prog') && handle instanceof WebGLProgram) names.set(handle, key.slice(0, -4));
+        }
+        // Two at once would nest their timer queries and restore each other's drawArrays wrapper.
+        if (profiling) throw new ToolFailure('not-ready', 'A profile is already running; await it first.');
+        profiling = true;
+        current.handle.pause();
+        let profile;
+        try {
+          const redraw = () => {
+            // A collapsed container draws nothing: no numbers rather than empty ones.
+            if (!c.redraw()) throw nothingDrawn(c);
+          };
+          profile = await profileDraws(c.gl, names, redraw, (args.frames as number | undefined) ?? 400);
+        } finally {
+          profiling = false;
+          // The pause state as it is now: a pause() or resume() may have come in meanwhile.
+          if (!paused && current.core === c) current.handle.resume();
+        }
+        if (!profile) return { gpuTimer: false };
+        if (c.renderer !== r) throw nothingDrawn(c);
+        const passes: Record<string, PassTiming> = {};
+        for (const [pass, t] of Object.entries(profile.passes)) passes[pass] = { n: t.n, median: round(t.median, 2), p90: round(t.p90, 2) };
+        return {
+          gpuTimer: true,
+          passes,
+          disjoint: profile.disjoint,
+          cells: { cols: r.cols, rows: r.rows },
+          width: c.canvas.width,
+          height: c.canvas.height,
+          gpu: c.stats.gpu,
+          cpuMs: round(profile.cpuMs, 4),
+        };
+      },
+    },
+    {
       name: 'setRender',
       description:
         'What the pond draws: view final (the finished frame) or raw (glyphs on the plain background, no ' +
@@ -636,7 +698,8 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
       needs: 'nothing',
       run: () => {
         paused = false;
-        current.handle.resume();
+        // A running frame loop would draw through the profile's timer queries; it resumes once that ends.
+        if (!profiling) current.handle.resume();
         return { paused, frame: state().frame };
       },
     },
@@ -738,6 +801,9 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
         }
         const checked = validate(tool.inputSchema, args);
         if (!checked.ok) return { ok: false, error: { code: 'invalid-args', message: checked.message } };
+        if (profiling && !tool.annotations.readOnly && !WHILE_PROFILING.has(tool.name)) {
+          return { ok: false, error: { code: 'not-ready', message: `A profile is running; call ${tool.name} once it ends.` } };
+        }
         if (tool.needs !== 'nothing') core(tool.needs);
         ran = tool;
         const result = await tool.run(checked.value);
