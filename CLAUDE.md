@@ -8,9 +8,9 @@ The browser suite `npm run test:browser` (~30 s, including a full build) is the 
 
 Merging a new `package.json` version to `main` publishes it to npm (`.github/workflows/release.yml` header has the details). Bump with `npm version <x.y.z> --no-git-tag-version` and add its `CHANGELOG.md` entry in the same PR, which must pass `npm run release:check`.
 
-# Colour
+# Scene
 
-Before adding or changing a colour the pond draws (a shader colour, a palette slot or preset, a new scene object), read `docs/colour-slots.md`.
+Before adding something the pond draws (a scene object, sky feature or material), read `docs/scene-features.md`; before adding or changing a colour (a shader colour, a palette slot or preset), read `docs/colour-slots.md`.
 
 # Browser checks
 
