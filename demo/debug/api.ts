@@ -138,7 +138,6 @@ interface Mount {
 
 /** A random seed, as the library would pick one. */
 const randomSeed = () => (Math.random() * 2 ** 32) >>> 0;
-const NOTHING_DRAWN = 'Nothing could be drawn (context lost or pond collapsed).';
 
 export interface KoiApi {
   /** Every tool with its name, description, inputSchema and annotations. */
@@ -244,6 +243,9 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
         perf.end(cpuMs);
         if (listeners.frame.size) emit('frame', { intervalMs: interval, cpuMs, frame: m.core?.stats.frames ?? 0, stepped: false });
       },
+      lost: () => {
+        if (m === current) changed(null);
+      },
       restored: () => {
         if (!m.core) return;
         // A new renderer starts with the library defaults.
@@ -253,6 +255,16 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
       },
     });
     return m;
+  };
+
+  /**
+   * Why a manual draw drew nothing. A draw that throws fails the pond, and
+   * onError has already run by the time step()/redraw() return.
+   */
+  const nothingDrawn = (c: PondCore): ToolFailure => {
+    if (current.error) return new ToolFailure('pond-failed', `The pond can't run: ${current.error.message}`);
+    if (!c.renderer) return new ToolFailure('context-lost', 'The WebGL context is lost; wait for it to be restored.');
+    return new ToolFailure('not-ready', 'Nothing could be drawn: the pond is too small to draw (collapsed container).');
   };
 
   const core = (needs: ToolDef['needs'] = 'pond'): PondCore => {
@@ -273,7 +285,8 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
     return {
       ready: !!c && !current.error,
       failed: current.error?.message ?? null,
-      contextLost: !!c && !c.renderer,
+      // A failed pond drops its renderer too, but it will never be restored.
+      contextLost: !!c && !c.renderer && !current.error,
       paused,
       frame: c?.stats.frames ?? 0,
       time: {
@@ -563,7 +576,7 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
         }
         for (let i = 0; i < frames; i++) {
           const t0 = performance.now();
-          if (!c.step(dt)) throw new ToolFailure('context-lost', NOTHING_DRAWN);
+          if (!c.step(dt)) throw nothingDrawn(c);
           if (listeners.frame.size) {
             emit('frame', { intervalMs: dt * 1000, cpuMs: performance.now() - t0, frame: c.stats.frames, stepped: true });
           }
@@ -581,7 +594,7 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
       needs: 'renderer',
       run: () => {
         const c = core('renderer');
-        if (!c.redraw()) throw new ToolFailure('context-lost', NOTHING_DRAWN);
+        if (!c.redraw()) throw nothingDrawn(c);
         // Same task as the draw, so the buffer hasn't been presented and cleared yet.
         return { dataUrl: c.canvas.toDataURL('image/png'), width: c.canvas.width, height: c.canvas.height };
       },

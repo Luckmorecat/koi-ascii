@@ -426,6 +426,7 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       (e) => {
         e.preventDefault();
         renderer = null;
+        hook(() => slot.hooks.lost?.());
         schedule();
       },
       { signal },

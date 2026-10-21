@@ -2,6 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KoiPond, KoiPondError } from '../src/index';
 import { createApi, type KoiApi } from '../demo/debug/api';
 import { DEFAULT_SCENE } from '../demo/scene';
+import type { PondCore, PondHooks } from '../src/internal';
+
+// Captures the API's hooks so a test can bring a stand-in pond up.
+const hooks: PondHooks[] = [];
+vi.mock('../src/internal', async (actual) => ({
+  ...(await actual<typeof import('../src/internal')>()),
+  attachHooks: (_handle: unknown, h: PondHooks) => void hooks.push(h),
+}));
 
 // The API with a stand-in for the page's mount: ponds that never come up
 // unless a test fails them, which is all call() and reseed need here.
@@ -10,6 +18,7 @@ let destroyed: number;
 let koi: KoiApi;
 
 beforeEach(() => {
+  hooks.length = 0;
   failers = [];
   destroyed = 0;
   vi.stubGlobal('location', { search: '?debug', pathname: '/', hash: '' });
@@ -63,5 +72,54 @@ describe('reseed', () => {
     const ready = koi.ready;
     void koi.call('reseed', { seed: 3 });
     await expect(ready).rejects.toMatchObject({ code: 'not-ready' });
+  });
+});
+
+describe('a manual draw that draws nothing', () => {
+  /** Brings the first pond up with a core whose draws return `drawn()`. */
+  const up = (drawn: () => boolean, renderer: object | null = {}) => {
+    const core = {
+      gl: { getExtension: () => null },
+      renderer,
+      stats: { frames: 0 },
+      sky: { phase: 0 },
+      pond: { time: 0, fish: [] },
+      canvas: {},
+      step: drawn,
+      redraw: drawn,
+      setDpr() {},
+    } as unknown as PondCore;
+    hooks[0].ready?.(core);
+  };
+
+  it('reports pond-failed when the draw failed the pond', async () => {
+    // The library fails the pond (calling onError) before step()/redraw() return false.
+    up(() => {
+      failers[0](failure('renderer-failed'));
+      return false;
+    });
+    expect(await koi.call('step')).toMatchObject({ ok: false, error: { code: 'pond-failed' } });
+  });
+
+  it('reports pond-failed from capture too', async () => {
+    up(() => {
+      failers[0](failure('renderer-failed'));
+      return false;
+    });
+    expect(await koi.call('capture')).toMatchObject({ ok: false, error: { code: 'pond-failed' } });
+  });
+
+  it('does not report a failed pond as context-lost in getState', async () => {
+    up(() => false, null);
+    failers[0](failure('renderer-failed'));
+    expect(await koi.call('getState')).toMatchObject({
+      ok: true,
+      result: { ready: false, failed: 'renderer-failed happened', contextLost: false },
+    });
+  });
+
+  it('reports not-ready, not context-lost, for a collapsed pond', async () => {
+    up(() => false);
+    expect(await koi.call('capture')).toMatchObject({ ok: false, error: { code: 'not-ready' } });
   });
 });
