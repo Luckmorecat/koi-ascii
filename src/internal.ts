@@ -54,6 +54,8 @@ export interface PondHooks {
   /** Brackets the simulation + GPU submit of a frame. */
   begin?(): void;
   end?(cpuMs: number): void;
+  /** The WebGL context was lost; the renderer is null until `restored`. */
+  lost?(): void;
   /** After a lost WebGL context came back with a new renderer. */
   restored?(): void;
 }

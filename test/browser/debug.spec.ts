@@ -135,3 +135,21 @@ test('step pauses and advances the frame counter exactly', async ({ page }) => {
   await page.evaluate(() => (window.koi as unknown as Tools).resume());
   await expect.poll(() => page.evaluate(async () => (await (window.koi as unknown as Tools).getState()).frame)).toBeGreaterThan(r.later);
 });
+
+test('context loss and restore each emit a change event', async ({ page }) => {
+  await openDebug(page);
+  await page.evaluate(() => {
+    const seen: { tool: string | null; contextLost: boolean }[] = [];
+    window.koi!.on('change', (e) => seen.push({ tool: e.tool, contextLost: e.state.contextLost }));
+    const ext = document.querySelector<HTMLCanvasElement>('#pond canvas')!.getContext('webgl2')!.getExtension('WEBGL_lose_context')!;
+    Object.assign(window, { koiSeen: seen, koiLoseContext: ext });
+    ext.loseContext();
+  });
+  const seen = () => page.evaluate(() => (window as unknown as { koiSeen: unknown[] }).koiSeen);
+  await expect.poll(seen).toEqual([{ tool: null, contextLost: true }]);
+  await page.evaluate(() => (window as unknown as { koiLoseContext: WEBGL_lose_context }).koiLoseContext.restoreContext());
+  await expect.poll(seen).toEqual([
+    { tool: null, contextLost: true },
+    { tool: null, contextLost: false },
+  ]);
+});

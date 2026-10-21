@@ -243,6 +243,9 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
         perf.end(cpuMs);
         if (listeners.frame.size) emit('frame', { intervalMs: interval, cpuMs, frame: m.core?.stats.frames ?? 0, stepped: false });
       },
+      lost: () => {
+        if (m === current) changed(null);
+      },
       restored: () => {
         if (!m.core) return;
         // A new renderer starts with the library defaults.
