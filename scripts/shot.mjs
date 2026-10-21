@@ -16,12 +16,10 @@
 //           real throughput); with ?debug `await koi.getPerf()` is reported too
 //   --reduced-motion  emulates prefers-reduced-motion: reduce from before the page
 //           loads, so the pond runs calm (without it: no-preference)
-import { chromium } from '@playwright/test';
-import { createServer } from 'vite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { assertGpu, gpuLaunchOptions } from '../test/browser/gpu.ts';
+import { launchGpu, startDemo } from './demo.mjs';
 
 const { values: opt, positionals } = parseArgs({
   allowPositionals: true,
@@ -43,11 +41,7 @@ const out = path.resolve(opt.out);
 fs.mkdirSync(out, { recursive: true });
 for (const f of fs.readdirSync(out)) if (/^shot-\d+\.png$/.test(f)) fs.rmSync(path.join(out, f));
 
-const server = await createServer({
-  configFile: 'vite.demo.config.ts',
-  logLevel: 'error',
-  server: { host: '127.0.0.1', port: 0, strictPort: false, hmr: false },
-});
+let demo;
 let browser;
 const reducedMotion = opt['reduced-motion'];
 const report = {
@@ -59,11 +53,10 @@ const report = {
   errors: [],
 };
 try {
-  await server.listen();
-  report.url = new URL(query.replace(/^(?=[^?/])/, '?'), server.resolvedUrls.local[0]).href;
+  demo = await startDemo();
+  report.url = demo.url(query);
 
-  browser = await chromium.launch(gpuLaunchOptions);
-  report.renderer = await assertGpu(browser);
+  ({ browser, renderer: report.renderer } = await launchGpu());
   const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: +opt.dpr });
   page.on('console', (m) => m.type() === 'error' && report.errors.push(m.text()));
   page.on('pageerror', (e) => report.errors.push(e.message));
@@ -107,7 +100,7 @@ try {
   report.errors.push(`shot: ${e.message}`);
 } finally {
   await browser?.close();
-  await server.close();
+  await demo?.close();
 }
 console.log(JSON.stringify(report, null, 2));
 process.exitCode = report.errors.length ? 1 : 0;

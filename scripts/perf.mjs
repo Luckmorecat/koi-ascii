@@ -1,0 +1,213 @@
+// GPU time per render pass of the demo, optionally against a base revision:
+// "did this change cost GPU time compared with main?". Each run loads the page
+// with ?debug, pins the viewport, reseeds with seed 42, steps 120 frames and
+// calls koi.profile (timer queries around every draw). Starts its own Vite
+// server(s) and stops them on exit. Prints a table on stderr and one JSON
+// report on stdout; exits 1 on page errors. Run it through `npm run perf`
+// (see shot.mjs for why --experimental-strip-types).
+//
+//   npm run perf -- [query…] [--base rev] [--runs 5] [--frames 400]
+//                   [--size 1280x800] [--dpr 1]
+//
+//   query     demo URL query, one table per query, e.g. '?debug&time=fixed&phase=0.83'
+//             (default '?debug'; debug is added if missing)
+//   --base    also measure this revision (a branch, tag or sha) and print the delta.
+//             It is checked out as a detached worktree in .claude/worktrees/perf-base-<sha>
+//             (node_modules hard-linked: a symlink makes Vite answer 403), served by
+//             its own Vite server and removed afterwards, also on error or Ctrl-C.
+//             Base and head runs alternate in one browser. The base needs koi.profile;
+//             an older one fails with a message. Head is the working tree, uncommitted
+//             changes included.
+//   --runs    page loads per side; the table shows the median of the runs' medians
+//             and their spread (max − min)
+//   --frames  timed redraws per run (koi.profile's frames)
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { parseArgs } from 'node:util';
+import { launchGpu, startDemo } from './demo.mjs';
+
+const { values: opt, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    base: { type: 'string' },
+    runs: { type: 'string', default: '5' },
+    frames: { type: 'string', default: '400' },
+    size: { type: 'string', default: '1280x800' },
+    dpr: { type: 'string', default: '1' },
+  },
+});
+const [width, height] = opt.size.split('x').map(Number);
+const dpr = +opt.dpr;
+const runs = +opt.runs;
+const frames = +opt.frames;
+const queries = (positionals.length ? positionals : ['?debug']).map((q) => {
+  const bare = q.replace(/^\?/, '');
+  return /(^|&)debug(=|&|$)/.test(bare) ? `?${bare}` : `?debug${bare ? `&${bare}` : ''}`;
+});
+
+const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
+const top = git('rev-parse', '--show-toplevel');
+
+/** The base checkout; removed by cleanup(), which also runs on Ctrl-C. */
+let worktree = null;
+function cleanup() {
+  if (!worktree) return;
+  const dir = worktree;
+  worktree = null;
+  try {
+    execFileSync('git', ['worktree', 'remove', '--force', dir], { stdio: 'ignore' });
+  } catch {
+    fs.rmSync(dir, { recursive: true, force: true });
+    execFileSync('git', ['worktree', 'prune'], { stdio: 'ignore' });
+  }
+}
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () => {
+    cleanup();
+    process.exit(130);
+  });
+}
+
+function addWorktree(rev) {
+  const sha = git('rev-parse', '--verify', '--quiet', `${rev}^{commit}`);
+  const dir = path.join(top, '.claude', 'worktrees', `perf-base-${sha.slice(0, 9)}`);
+  // Left over from a run that was killed outright.
+  if (fs.existsSync(dir)) {
+    worktree = dir;
+    cleanup();
+  }
+  execFileSync('git', ['worktree', 'add', '--detach', dir, sha], { stdio: 'ignore' });
+  worktree = dir;
+  execFileSync('cp', ['-al', path.join(top, 'node_modules'), path.join(dir, 'node_modules')]);
+  // Vite's dep cache is written in place; the base gets its own.
+  fs.rmSync(path.join(dir, 'node_modules', '.vite'), { recursive: true, force: true });
+  return { sha, dir };
+}
+
+const median = (a) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s.length % 2 ? s[s.length >> 1] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+};
+const r2 = (v) => Math.round(v * 100) / 100;
+
+const report = {
+  renderer: '',
+  viewport: { width, height, dpr },
+  runs,
+  frames,
+  head: { sha: git('rev-parse', 'HEAD'), dirty: git('status', '--porcelain', '--untracked-files=no') !== '' },
+  base: null,
+  queries: [],
+  errors: [],
+};
+const demos = {};
+let browser;
+try {
+  if (opt.base) {
+    let base;
+    try {
+      base = addWorktree(opt.base);
+    } catch {
+      throw new Error(`can't check out --base ${opt.base}: not a revision of this repo?`);
+    }
+    report.base = { rev: opt.base, sha: base.sha };
+    demos.base = await startDemo(base.dir);
+  }
+  demos.head = await startDemo(top);
+  ({ browser, renderer: report.renderer } = await launchGpu());
+  const sides = Object.keys(demos).sort(); // base, head
+
+  /** One page load: the reproducible setup, then koi.profile. */
+  async function measure(side, url) {
+    const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: dpr });
+    page.on('console', (m) => m.type() === 'error' && report.errors.push(`${side}: ${m.text()}`));
+    page.on('pageerror', (e) => report.errors.push(`${side}: ${e.message}`));
+    try {
+      await page.goto(url);
+      await page.waitForFunction(() => !!window.koi, null, { timeout: 15_000 });
+      await page.evaluate(() => window.koi.ready);
+      if (!(await page.evaluate(() => typeof window.koi.profile === 'function'))) {
+        throw new Error(`${side} has no koi.profile (${side === 'base' ? `${opt.base} predates it; pick a newer --base` : 'stale page?'})`);
+      }
+      const r = await page.evaluate(
+        async ({ width, height, dpr, frames }) => {
+          await koi.setViewport({ width, height, dpr });
+          await koi.reseed({ seed: 42 });
+          await koi.step({ frames: 120 });
+          return koi.profile({ frames });
+        },
+        { width, height, dpr, frames },
+      );
+      if (!r.gpuTimer) throw new Error('no EXT_disjoint_timer_query_webgl2 on this GPU: nothing to time');
+      return r;
+    } finally {
+      await page.close();
+    }
+  }
+
+  for (const query of queries) {
+    const q = { query, urls: {}, cells: null, canvas: null, disjointRuns: 0, cpuMs: {}, passes: {} };
+    report.queries.push(q);
+    const results = Object.fromEntries(sides.map((s) => [s, []]));
+    for (const side of sides) q.urls[side] = demos[side].url(query);
+    for (let i = 0; i < runs; i++) {
+      // Alternate which side goes first, so a clock ramping up favours neither.
+      for (const side of i % 2 ? [...sides].reverse() : sides) {
+        if (process.stderr.isTTY) process.stderr.write(`\r\x1b[K${query}  run ${i + 1}/${runs} ${side}`);
+        const r = await measure(side, q.urls[side]);
+        results[side].push(r);
+        q.cells = r.cells;
+        q.canvas = { width: r.width, height: r.height };
+        if (r.disjoint) q.disjointRuns++;
+      }
+    }
+    if (process.stderr.isTTY) process.stderr.write('\r\x1b[K');
+
+    const names = [...new Set(sides.flatMap((s) => results[s].flatMap((r) => Object.keys(r.passes))))];
+    // Frame (all passes) last; the rest in draw order as first seen.
+    names.sort((a, b) => (a === 'frame') - (b === 'frame'));
+    for (const name of names) {
+      const entry = {};
+      for (const side of sides) {
+        const medians = results[side].map((r) => r.passes[name]?.median ?? 0);
+        entry[side] = { median: r2(median(medians)), spread: r2(Math.max(...medians) - Math.min(...medians)), runs: medians };
+      }
+      if (entry.base) {
+        entry.deltaUs = r2(entry.head.median - entry.base.median);
+        entry.deltaPct = entry.base.median ? r2((entry.deltaUs / entry.base.median) * 100) : null;
+      }
+      q.passes[name] = entry;
+    }
+    for (const side of sides) q.cpuMs[side] = +median(results[side].map((r) => r.cpuMs)).toFixed(4);
+    process.stderr.write(table(q) + '\n');
+  }
+} catch (e) {
+  report.errors.push(`perf: ${e.message}`);
+} finally {
+  await browser?.close();
+  for (const d of Object.values(demos)) await d.close();
+  cleanup();
+}
+console.log(JSON.stringify(report, null, 2));
+process.exitCode = report.errors.length ? 1 : 0;
+
+function table(q) {
+  const base = !!report.base;
+  const head = [
+    `${q.query}  ${q.canvas.width}×${q.canvas.height} px, ${q.cells.cols}×${q.cells.rows} cells, ${runs} runs × ${frames} frames, GPU µs per frame`,
+  ];
+  if (base) head.push(`base ${report.base.rev} (${report.base.sha.slice(0, 9)})  vs  head ${report.head.sha.slice(0, 9)}${report.head.dirty ? ' + uncommitted' : ''}`);
+  if (q.disjointRuns) head.push(`warning: ${q.disjointRuns} run(s) hit a GPU disjoint event; their times may be off`);
+  const cols = base ? ['pass', 'base', '±', 'head', '±', 'Δ µs', 'Δ %'] : ['pass', 'median', '±'];
+  const sign = (v) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2));
+  const rows = Object.entries(q.passes).map(([name, p]) =>
+    base
+      ? [name, p.base.median.toFixed(2), p.base.spread.toFixed(2), p.head.median.toFixed(2), p.head.spread.toFixed(2), sign(p.deltaUs), p.deltaPct === null ? '—' : `${p.deltaPct > 0 ? '+' : ''}${p.deltaPct.toFixed(1)}%`]
+      : [name, p.head.median.toFixed(2), p.head.spread.toFixed(2)],
+  );
+  rows.push(base ? ['cpu ms', String(q.cpuMs.base), '', String(q.cpuMs.head), '', '', ''] : ['cpu ms', String(q.cpuMs.head), '']);
+  const w = cols.map((c, i) => Math.max(c.length, ...rows.map((r) => r[i].length)));
+  const line = (r) => r.map((c, i) => (i ? c.padStart(w[i]) : c.padEnd(w[i]))).join('  ');
+  return ['', ...head, '', line(cols), ...rows.map(line), '(± is the spread of the per-run medians, max − min)'].join('\n');
+}
