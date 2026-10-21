@@ -4,6 +4,7 @@
 // it depends on; a new one goes after all of them. Every chunk also sees
 // uniforms.glsl and what the renderer puts before it: the generated defines
 // (G_*, V_*, J_*, T_*, MAX_FISH; src/renderer.ts) and common.glsl.
+import type { SourceStart } from '../../gl/program';
 import uniforms from './uniforms.glsl?raw';
 import light from './light.glsl?raw';
 import cell from './cell.glsl?raw';
@@ -37,7 +38,7 @@ export const sceneSrc = sceneChunks.map(([, src]) => src).join('\n');
 
 /** The line each chunk starts on in sceneSrc, 1-based, so compile errors can name `sky.glsl:42`. */
 let line = 1;
-export const sceneLines: readonly { name: string; line: number }[] = sceneChunks.map(([name, src]) => {
+export const sceneLines: readonly SourceStart[] = sceneChunks.map(([name, src]) => {
   const start = { name, line };
   line += src.split('\n').length;
   return start;

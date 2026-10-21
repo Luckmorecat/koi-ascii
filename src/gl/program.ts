@@ -1,13 +1,27 @@
-function compile(gl: WebGL2RenderingContext, type: number, source: string, label: string): WebGLShader {
+/** Where a source file starts in a compiled shader, 1-based, so compile errors can name `file:line`. */
+export interface SourceStart {
+  name: string;
+  line: number;
+}
+
+/** `file:line` for line n of a compiled shader, or just n before the first file. */
+export function sourceLine(files: readonly SourceStart[], n: number): string {
+  let file: SourceStart | undefined;
+  for (const f of files) if (f.line <= n) file = f;
+  return file ? `${file.name}:${n - file.line + 1}` : String(n);
+}
+
+function compile(gl: WebGL2RenderingContext, type: number, source: string, label: string, files: readonly SourceStart[] = []): WebGLShader {
   const shader = gl.createShader(type);
   if (!shader) throw new Error(`${label}: could not create shader`);
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS) && !gl.isContextLost()) {
-    const log = gl.getShaderInfoLog(shader) ?? '';
+    // Drivers report `0:<line>` (source string 0); name the file instead.
+    const log = (gl.getShaderInfoLog(shader) ?? '').replace(/\b0:(\d+)\b/g, (_, n: string) => sourceLine(files, Number(n)));
     const numbered = source
       .split('\n')
-      .map((l, i) => `${String(i + 1).padStart(4)}  ${l}`)
+      .map((l, i) => `${sourceLine(files, i + 1).padStart(files.length ? 18 : 4)}  ${l}`)
       .join('\n');
     gl.deleteShader(shader);
     throw new Error(`${label}: shader compile failed\n${log}\n${numbered}`);
@@ -21,10 +35,11 @@ export class Program {
   private readonly gl: WebGL2RenderingContext;
   private readonly locs = new Map<string, WebGLUniformLocation | null>();
 
-  constructor(gl: WebGL2RenderingContext, vertex: string, fragment: string, label: string) {
+  /** `fragmentFiles`: where each file starts in `fragment`, for compile errors. */
+  constructor(gl: WebGL2RenderingContext, vertex: string, fragment: string, label: string, fragmentFiles: readonly SourceStart[] = []) {
     this.gl = gl;
     const vs = compile(gl, gl.VERTEX_SHADER, vertex, `${label}.vert`);
-    const fs = compile(gl, gl.FRAGMENT_SHADER, fragment, `${label}.frag`);
+    const fs = compile(gl, gl.FRAGMENT_SHADER, fragment, `${label}.frag`, fragmentFiles);
     const program = gl.createProgram();
     if (!program) throw new Error(`${label}: could not create program`);
     gl.attachShader(program, vs);

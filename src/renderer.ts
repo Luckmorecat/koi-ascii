@@ -1,7 +1,7 @@
 import vertexSrc from './shaders/fullscreen.vert?raw';
 import commonSrc from './shaders/common.glsl?raw';
 import rippleSrc from './shaders/ripple.frag?raw';
-import { sceneSrc } from './shaders/scene';
+import { sceneLines, sceneSrc } from './shaders/scene';
 import asciiSrc from './shaders/ascii.frag?raw';
 import glowSrc from './shaders/glow.frag?raw';
 import flyVertSrc from './shaders/fly.vert?raw';
@@ -116,7 +116,10 @@ export class Renderer {
     const fragment = (src: string) => `#version 300 es\n${defines}${commonSrc}\n${src}`;
     const vertex = `#version 300 es\n${vertexSrc}`;
     this.rippleProg = new Program(gl, vertex, fragment(rippleSrc), 'ripple');
-    this.sceneProg = new Program(gl, vertex, fragment(sceneSrc), 'scene');
+    // The line scene chunk 1 starts on, so compile errors name `sky.glsl:42`.
+    const sceneAt = fragment('').split('\n').length;
+    const sceneFiles = sceneLines.map(({ name, line }) => ({ name, line: line + sceneAt - 1 }));
+    this.sceneProg = new Program(gl, vertex, fragment(sceneSrc), 'scene', sceneFiles);
     this.glowProg = software ? null : new Program(gl, vertex, fragment(glowSrc), 'glow');
     this.asciiProg = new Program(gl, vertex, fragment((software ? '' : '#define GLOW\n') + asciiSrc), 'ascii');
     this.flyProg = new Program(gl, `#version 300 es\n${commonSrc}\n${flyVertSrc}`, fragment(flyFragSrc), 'fly');
