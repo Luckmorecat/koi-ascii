@@ -326,8 +326,10 @@ export const parseCssColor: ParseColor = (css) => {
   if (rgba) return [Number(rgba[1]) / 255, Number(rgba[2]) / 255, Number(rgba[3]) / 255];
 
   // Other spaces (oklch(), color(display-p3 …)) keep their own syntax: let the
-  // canvas convert by drawing a pixel. Translucent colours read back
-  // unpremultiplied, so the colour survives (rounded); alpha is dropped.
+  // canvas convert by drawing a pixel. Their serialisation puts alpha last as
+  // `/ a`; strip it so the pixel is opaque, since a transparent pixel reads
+  // back as black and a faint one loses precision.
+  ctx.fillStyle = a.replace(/\s*\/\s*[^/)]+\)$/, ')');
   ctx.globalCompositeOperation = 'copy';
   ctx.fillRect(0, 0, 1, 1);
   const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;

@@ -292,6 +292,12 @@ test.describe('colours are parsed by the browser', () => {
     const ok = await pond(page, { palette: { mode: 'roles', background: 'oklch(0.7 0.1 200)' }, time: NOON });
     const m = (await sample(page, ok)).mode;
     [64, 177, 183].forEach((v, c) => expect(Math.abs(m[c] - v)).toBeLessThanOrEqual(3));
+    // Alpha is dropped even at zero, where a drawn pixel would read back black.
+    for (const alpha of ['0', '0.01']) {
+      const clear = await pond(page, { palette: { mode: 'roles', background: `oklch(0.7 0.1 200 / ${alpha})` }, time: NOON });
+      const mc = (await sample(page, clear)).mode;
+      [64, 177, 183].forEach((v, c) => expect(Math.abs(mc[c] - v)).toBeLessThanOrEqual(3));
+    }
 
     const bad = await pond(page, { palette: { mode: 'roles', background: 'var(--brand)' }, time: NOON });
     expect((await sample(page, bad)).mode).toEqual(hex('#06131a'));
