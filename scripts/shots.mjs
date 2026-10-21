@@ -250,13 +250,19 @@ async function comparePixels({ a, b }) {
       const inY = i < y.width && j < y.height;
       const p = (j * x.width + i) * 4;
       const q = (j * y.width + i) * 4;
+      const o = (j * w + i) * 4;
+      // Outside both images (one is wider, the other taller): nothing to compare.
+      if (!inX && !inY) {
+        diff.data.set([0, 0, 0, 255], o);
+        continue;
+      }
+      // Only read a buffer inside its own image: past its width, an index aliases the next row.
       const changed =
         inX !== inY ||
         x.data[p] !== y.data[q] ||
         x.data[p + 1] !== y.data[q + 1] ||
         x.data[p + 2] !== y.data[q + 2] ||
         x.data[p + 3] !== y.data[q + 3];
-      const o = (j * w + i) * 4;
       if (changed) {
         changedPixels++;
         if (i < x0) x0 = i;
