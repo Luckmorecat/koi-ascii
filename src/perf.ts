@@ -1,3 +1,5 @@
+import { LoopSource, MAX_CYCLE_S, MIN_CYCLE_S, type Sky } from './sky';
+
 /** Frames kept for the graph and the 1 % low. */
 const HISTORY = 240;
 /** Graph ceiling in ms; slower frames are clipped to the top. */
@@ -63,9 +65,88 @@ class GpuTimer {
   }
 }
 
+/** Phase as a clock time, 0 → 00:00, 0.5 → 12:00. */
+function clock(phase: number): string {
+  const m = Math.floor(phase * 1440);
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Time-of-day controls: phase slider, loop length and phase readout. Only
+ * this row takes pointer events; the rest of the overlay stays click-through.
+ * It sits outside the canvas, so using it never reaches the pond's listeners.
+ */
+class SkyControls {
+  readonly root: HTMLDivElement;
+  private slider: HTMLInputElement;
+  private readout: HTMLSpanElement;
+
+  constructor(private sky: Sky) {
+    this.root = document.createElement('div');
+    this.root.className = 'sky';
+
+    this.slider = document.createElement('input');
+    this.slider.type = 'range';
+    this.slider.min = '0';
+    this.slider.max = '1';
+    this.slider.step = '0.001';
+    this.slider.setAttribute('aria-label', 'Time of day');
+    // Hold the phase while dragging, hand it back to the source on release.
+    // 'change' covers key steps, but a drag that ends where it started fires
+    // no 'change', so pointer release and blur also let go (release() is a
+    // no-op when nothing is held).
+    this.slider.addEventListener('input', () => {
+      sky.hold(Number(this.slider.value));
+      this.sync();
+    });
+    this.slider.addEventListener('change', () => sky.release());
+    this.slider.addEventListener('pointerup', () => sky.release());
+    // Also fires after pointercancel, when the browser takes the drag away.
+    this.slider.addEventListener('lostpointercapture', () => sky.release());
+    this.slider.addEventListener('blur', () => sky.release());
+    // Keep the drag's pointer events on the slider even when it strays over
+    // the canvas, so dragging never steers the fish.
+    this.slider.addEventListener('pointerdown', (e) => this.slider.setPointerCapture(e.pointerId));
+
+    const cycle = document.createElement('input');
+    cycle.type = 'number';
+    cycle.min = String(MIN_CYCLE_S);
+    cycle.max = String(MAX_CYCLE_S);
+    cycle.step = '10';
+    cycle.setAttribute('aria-label', 'Day length in seconds');
+    const loop = sky.source instanceof LoopSource ? sky.source : null;
+    if (loop) {
+      cycle.value = String(loop.cycle);
+      cycle.addEventListener('change', () => {
+        loop.cycle = Number(cycle.value);
+        cycle.value = String(loop.cycle);
+      });
+    } else {
+      cycle.disabled = true;
+      cycle.title = 'Only a looping sky has a day length (?sky=loop)';
+    }
+
+    this.readout = document.createElement('span');
+    const phaseRow = document.createElement('label');
+    phaseRow.append('phase ', this.slider);
+    const cycleRow = document.createElement('label');
+    cycleRow.append('day ', cycle, ' s  ', this.readout);
+    this.root.append(phaseRow, cycleRow);
+    this.sync();
+  }
+
+  /** Mirrors the current phase into the slider and readout. */
+  sync(): void {
+    const phase = this.sky.phase;
+    if (!this.sky.holding) this.slider.value = String(phase);
+    this.readout.textContent = `${phase.toFixed(3)} ${clock(phase)} ${this.sky.source.kind}`;
+  }
+}
+
 /**
  * On-screen FPS / frame-time overlay: rolling FPS, 1 % low, CPU submit time,
- * GPU time (where the timer extension exists) and a frame-time graph.
+ * GPU time (where the timer extension exists), a frame-time graph and the
+ * time-of-day controls.
  */
 export class PerfMonitor {
   private root: HTMLDivElement;
@@ -78,10 +159,12 @@ export class PerfMonitor {
   private cpuMs = 0;
   private lastText = 0;
   private gpu: GpuTimer | null = null;
+  private sky: SkyControls;
 
   constructor(
     private gl: WebGL2RenderingContext,
     private info: { gpu: string; software: boolean; seed: number },
+    sky: Sky,
     visible: boolean,
   ) {
     this.root = document.createElement('div');
@@ -92,7 +175,8 @@ export class PerfMonitor {
     this.graph.width = HISTORY;
     this.graph.height = 48;
     this.ctx = this.graph.getContext('2d')!;
-    this.root.append(this.text, this.graph);
+    this.sky = new SkyControls(sky);
+    this.root.append(this.text, this.graph, this.sky.root);
     document.body.append(this.root);
     this.resetGpu();
   }
@@ -132,6 +216,7 @@ export class PerfMonitor {
     if (now - this.lastText >= TEXT_MS) {
       this.lastText = now;
       this.drawText();
+      this.sky.sync();
     }
   }
 

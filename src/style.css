@@ -61,3 +61,40 @@ body {
   width: 240px;
   height: 48px;
 }
+
+/* Time-of-day controls: the only part of the overlay that takes the pointer. */
+#perf .sky {
+  width: 240px;
+  margin-top: 4px;
+  color: #b9dde2;
+  font: 11px/1.35 'JetBrains Mono', ui-monospace, monospace;
+  pointer-events: auto;
+}
+
+#perf .sky label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: pre;
+}
+
+#perf .sky input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  margin: 2px 0;
+  accent-color: #7fb3bb;
+}
+
+#perf .sky input[type='number'] {
+  width: 6ch;
+  padding: 0 2px;
+  color: inherit;
+  font: inherit;
+  background: rgba(127, 179, 187, 0.08);
+  border: 1px solid rgba(127, 179, 187, 0.25);
+  border-radius: 2px;
+}
+
+#perf .sky input:disabled {
+  opacity: 0.45;
+}

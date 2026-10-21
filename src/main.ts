@@ -4,6 +4,7 @@ import { MIN_POND_PX, Pond } from './pond';
 import { Renderer } from './renderer';
 import { FONT_WEIGHT } from './glyphs';
 import { PerfMonitor } from './perf';
+import { skyFromParams } from './sky';
 
 const FONT_FAMILY = '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace';
 /** Backing-store budget (device px) when WebGL runs on a CPU rasteriser. */
@@ -121,10 +122,14 @@ async function main(): Promise<void> {
   canvas.addEventListener('pointercancel', () => pond.pointerLeave());
 
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const sky = skyFromParams(params);
   const stats = { fps: 0, frameMs: 0, seed, gpu, software };
   // ?perf (or ?debug) shows the overlay from the start; P toggles it.
-  const perf = new PerfMonitor(gl, { gpu, seed, software }, params.has('perf') || debug);
+  const perf = new PerfMonitor(gl, { gpu, seed, software }, sky, params.has('perf') || debug);
+  // Keys typed into the overlay's day-length box are its own, not shortcuts.
+  const typing = (e: KeyboardEvent) => e.target instanceof HTMLInputElement && e.target.type !== 'range';
   window.addEventListener('keydown', (e) => {
+    if (typing(e)) return;
     if ((e.key === 'p' || e.key === 'P') && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) perf.toggle();
   });
   let raf = 0;
@@ -175,7 +180,8 @@ async function main(): Promise<void> {
     const t0 = performance.now();
     perf.begin();
     pond.update(step);
-    renderer.render(pond, step);
+    // The day runs on unscaled time: reduced motion slows the pond, not the sky.
+    renderer.render(pond, step, sky.update(dt));
     const cpuMs = performance.now() - t0;
     perf.end(cpuMs);
     stats.frameMs += (cpuMs - stats.frameMs) * 0.05;
@@ -198,9 +204,9 @@ async function main(): Promise<void> {
   });
 
   if (debug) {
-    Object.assign(window, { __koi: { pond, stats, get renderer() { return renderer; } } });
+    Object.assign(window, { __koi: { pond, stats, sky, get renderer() { return renderer; } } });
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'r' && renderer) renderer.raw = !renderer.raw;
+      if (e.key === 'r' && renderer && !typing(e)) renderer.raw = !renderer.raw;
     });
   }
 

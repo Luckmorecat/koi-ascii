@@ -32,6 +32,8 @@ export class Renderer {
   raw = false;
   cols = 0;
   rows = 0;
+  /** Time of day for the current frame; drives the lighting. */
+  phase = 0;
 
   private readonly gl: WebGL2RenderingContext;
   private readonly fontFamily: string;
@@ -153,7 +155,9 @@ export class Renderer {
     }
   }
 
-  render(pond: Pond, dt: number): void {
+  /** `phase` is the time of day in [0, 1), 0 = midnight (see sky.ts). */
+  render(pond: Pond, dt: number, phase: number): void {
+    this.phase = phase;
     const gl = this.gl;
     const atlas = this.atlas;
     const scene = this.scene;
