@@ -4,8 +4,10 @@
 # CHANGELOG.md entry, then deploys the demo (pages.yml).
 #
 # Every step skips what is already done, so after a failure "Re-run jobs"
-# finishes the release. Prereleases (0.4.0-beta.1) go to npm's `next`
-# dist-tag as a GitHub prerelease and leave the demo alone.
+# finishes the release; scripts/release-notes.ts releasePlan() decides.
+# Prereleases (0.4.0-beta.1) go to npm's `next` dist-tag as a GitHub
+# prerelease and leave the demo alone. Retrying a version older than its
+# channel's completes it without moving `latest`, `next` or the demo back.
 #
 # npm needs koi-ascii's trusted publisher set to this repo and release.yml
 # with direct `npm publish` allowed and no environment (npmjs.com → package
@@ -48,21 +50,14 @@ jobs:
         name: Find what is left to do
         run: |
           v=$(node -p "require('./package.json').version")
-          publish=true; tag=true; release=true
-          [ -n "$(npm view "koi-ascii@$v" version 2>/dev/null)" ] && publish=false
-          git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null && tag=false
-          gh release view "v$v" >/dev/null 2>&1 && release=false
-          deploy=false
-          if [[ $publish$tag$release == *true* && $v != *-* ]]; then deploy=true; fi
-          dist_tag=latest; [[ $v == *-* ]] && dist_tag=next
-          tee -a "$GITHUB_OUTPUT" <<EOF
-          version=$v
-          dist_tag=$dist_tag
-          publish=$publish
-          tag=$tag
-          release=$release
-          deploy=$deploy
-          EOF
+          export SHA=$GITHUB_SHA ON_NPM=false HAS_RELEASE=false
+          [ -n "$(npm view "koi-ascii@$v" version 2>/dev/null)" ] && ON_NPM=true
+          # The peeled line (^{}) comes last for an annotated tag.
+          TAG_SHA=$(git ls-remote origin "refs/tags/v$v" "refs/tags/v$v^{}" | tail -n1 | cut -f1)
+          gh release view "v$v" >/dev/null 2>&1 && HAS_RELEASE=true
+          DIST_TAGS=$(npm view koi-ascii dist-tags --json)
+          export TAG_SHA DIST_TAGS
+          node --experimental-strip-types scripts/release-plan.mjs | tee -a "$GITHUB_OUTPUT"
 
       - name: Check the lockfile and changelog
         run: npm run release:check -- --notes "$RUNNER_TEMP/notes.md"
@@ -72,7 +67,7 @@ jobs:
         run: |
           npm ci
           npm test
-          npm publish --tag ${{ steps.state.outputs.dist_tag }}
+          npm publish --tag ${{ steps.state.outputs.distTag }}
 
       - name: Tag
         if: steps.state.outputs.tag == 'true'
@@ -85,7 +80,8 @@ jobs:
         run: >
           gh release create "v${{ steps.state.outputs.version }}" --verify-tag
           --title "v${{ steps.state.outputs.version }}" --notes-file "$RUNNER_TEMP/notes.md"
-          ${{ steps.state.outputs.dist_tag == 'next' && '--prerelease' || '' }}
+          --latest=${{ steps.state.outputs.latest }}
+          ${{ steps.state.outputs.distTag == 'next' && '--prerelease' || '' }}
 
   pages:
     needs: release
