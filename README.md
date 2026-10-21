@@ -486,6 +486,14 @@ await koi.step({ frames: 120 });
 const { dataUrl } = await koi.capture();
 ```
 
+Two tools measure speed. `getPerf` is throughput of the running loop:
+requestAnimationFrame fps and frame ms, with GPU ms for the whole frame.
+`profile` is GPU time per pass: it pauses, redraws the same frame with a
+timer query around every draw and gives the median and p90 per pass, so it
+shows which pass a change made slower. To compare a change with another
+revision, `npm run perf -- '?debug' --base main` profiles both side by side
+(options at the top of `scripts/perf.mjs`).
+
 ## License
 
 [MIT](./LICENSE)
