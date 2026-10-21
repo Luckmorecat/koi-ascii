@@ -31,7 +31,7 @@ export interface SceneColors {
   uSilk: RGB;
   uBubble: RGB;
   uGoldDust: RGB;
-  /** Water glints. Pond: unused (the light's own hue); roles: the highlight. */
+  /** Water glints and the sun's glitter. Pond: unused (the light's own hue); roles: the highlight. */
   uGlintCol: RGB;
   /** Multiplies light added on top of a fish (specular, rim, caustics). */
   uAddTint: RGB;

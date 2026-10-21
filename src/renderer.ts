@@ -311,7 +311,8 @@ export class Renderer {
       .float('uStars', stars.stars)
       .float('uMoteThin', stars.moteThin)
       .vec2('uView', this.devW / this.dpr, this.devH / this.dpr)
-      .vec4('uMoon', light.moon.pos[0], light.moon.pos[1], light.moon.radius, this.sky.moon ? light.moon.alpha : 0);
+      .vec4('uMoon', light.moon.pos[0], light.moon.pos[1], light.moon.radius, this.sky.moon ? light.moon.alpha : 0)
+      .vec4('uSun', light.sun.pos[0], light.sun.pos[1], light.sun.radius, this.sky.sun ? light.sun.alpha : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // Fireflies: one point each, written over the scene's cells (fish too).

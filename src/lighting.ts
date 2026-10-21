@@ -9,7 +9,7 @@
 
 export type Vec3 = [number, number, number];
 
-/** A body's reflection on the water: the moon by night (the sun's will follow the same arc machinery). */
+/** A body's reflection on the water: the moon by night, the sun's glitter by day. */
 export interface Body {
   /** Centre as a share of the pond's width and height, y down. */
   pos: [number, number];
@@ -58,6 +58,8 @@ export interface Lighting {
   darkCaustic: number;
   /** The moon's reflection (the `moon` sky feature draws it), on its own arc: see moonAt(). */
   moon: Body;
+  /** The sun's glitter (the `sun` sky feature draws it), on the same path: see sunAt(). */
+  sun: Body;
 }
 
 // Everything except the direction, keyed by phase.
@@ -224,6 +226,18 @@ const MOON_RADIUS = 0.065;
 /** The moon fades in after the evening handoff and out before the morning one (D6). */
 const MOON_RISE: readonly [number, number] = [1 - HANDOFF[0], 1 - HANDOFF[0] + 0.05];
 const MOON_SET: readonly [number, number] = [HANDOFF[0] - 0.05, HANDOFF[0]];
+/** The sun's glitter patch: its outer edge as a share of the pond's shorter side. */
+const SUN_RADIUS = 0.1;
+/** The sun fades in after the morning handoff and out before the evening one (D6). */
+const SUN_RISE: readonly [number, number] = [HANDOFF[1], HANDOFF[1] + 0.05];
+const SUN_SET: readonly [number, number] = [1 - HANDOFF[1] - 0.05, 1 - HANDOFF[1]];
+/**
+ * The sun's path runs at this share of its light's pace, so its visible day
+ * (HANDOFF[1] … 1 − HANDOFF[1]) covers exactly the moon's visible night: up
+ * the left side, over the top, out near the top-right corner. At the light's
+ * own pace it would also run down the right side (P1: the top edge and one side).
+ */
+const SUN_PACE = (2 * HANDOFF[0]) / (1 - 2 * HANDOFF[1]);
 
 /**
  * Where a body's reflection sits: toward its azimuth from the pond's centre,
@@ -249,6 +263,18 @@ export function moonAt(phase: number): Body {
   const p = ((phase % 1) + 1) % 1;
   const alpha = 1 - smooth(MOON_SET[0], MOON_SET[1], p) * (1 - smooth(MOON_RISE[0], MOON_RISE[1], p));
   return { pos: bodyPos(TAU * (p - 0.75)), radius: MOON_RADIUS, alpha };
+}
+
+/**
+ * The sun's glitter at `phase`, from the phase alone, on the moon's path
+ * (see moonAt and SUN_PACE): rises on the left after the morning handoff,
+ * over the top at noon, gone near the top-right corner before the evening
+ * handoff, so it never jumps and never shares the sky with the moon.
+ */
+export function sunAt(phase: number): Body {
+  const p = ((phase % 1) + 1) % 1;
+  const alpha = smooth(SUN_RISE[0], SUN_RISE[1], p) * (1 - smooth(SUN_SET[0], SUN_SET[1], p));
+  return { pos: bodyPos(TAU * (0.25 + (p - 0.5) * SUN_PACE)), radius: SUN_RADIUS, alpha };
 }
 
 /** Flat water and a graded background at full night with `darkNight` on. */
@@ -342,6 +368,7 @@ export function lightingAt(phase: number, options: LightingOptions = {}): Lighti
     glowStrength: mix(a.glow, b.glow, t),
     ...darkNight(options.darkNight ? nightWeight(p) : 0),
     moon: moonAt(p),
+    sun: sunAt(p),
   };
 }
 

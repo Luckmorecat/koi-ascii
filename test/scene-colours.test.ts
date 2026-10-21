@@ -11,7 +11,7 @@ const SHADERS = { 'scene.frag': scene, 'fly.frag': fly };
 // Number-only vec3s that are maths or light, not an object's colour.
 const ALLOWED = new Set([
   'vec3(0.0, 0.0, 1.0)', // up: the flat-water normal and the half vector toward the viewer
-  'vec3(1.0)', // glints and moon shards whiten toward white (light, not pigment)
+  'vec3(1.0)', // glints, moon shards and the sun's glitter whiten toward white (light, not pigment)
   'vec3(0.2126, 0.7152, 0.0722)', // Rec.709 luminance weights
   'vec3(0.75)', // eyes never darker than this share of the light
 ]);
@@ -104,5 +104,24 @@ describe('firefly colour (D11)', () => {
       metallic: [0.6, 0.5, 0.2],
     };
     rolesScene(r).uFlyCol.forEach((v, i) => expect(v).toBeCloseTo(r.metallic[i] + (r.highlight[i] - r.metallic[i]) * 0.32, 12));
+  });
+});
+
+describe('sun colour (D11)', () => {
+  it("roles: the sun's glitter shares the glints' colour, the highlight", () => {
+    const r: ResolvedRoles = {
+      background: [0.96, 0.94, 0.9],
+      water: [0.7, 0.75, 0.78],
+      highlight: [0.11, 0.15, 0.16],
+      pale: [0.3, 0.32, 0.34],
+      ink: [0.2, 0.2, 0.22],
+      accent: [0.7, 0.2, 0.15],
+      metallic: [0.6, 0.5, 0.2],
+    };
+    expect(rolesScene(r).uGlintCol).toEqual(r.highlight);
+    // scene.frag's sun() draws with uGlintCol in roles and the light's hue in the pond.
+    const sun = scene.slice(scene.indexOf('void sun('), scene.indexOf('// ----', scene.indexOf('void sun(')));
+    expect(sun).toContain('uGlintCol');
+    expect(sun).toContain('mirrorHue()');
   });
 });

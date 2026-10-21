@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { lightingAt, moonAt, nightWeight, starWeight, type Lighting } from '../src/lighting';
+import { lightingAt, moonAt, nightWeight, starWeight, sunAt, type Body, type Lighting } from '../src/lighting';
 import { asciiLook, graded } from '../src/look';
 import { POND, POND_BG, type ResolvedPalette } from '../src/palette';
 import before from './fixtures/lighting-0.2.json';
 
 // test/fixtures/lighting-0.2.json is lightingAt() as it was at f374243 (0.2),
 // sampled every 0.05 and around each keyframe and handoff.
-const BASELINE = before as unknown as Record<string, Omit<Lighting, 'darkWater' | 'darkCaustic' | 'moon'>>;
+const BASELINE = before as unknown as Record<string, Omit<Lighting, 'darkWater' | 'darkCaustic' | 'moon' | 'sun'>>;
 const PHASES = Object.keys(BASELINE).map(Number);
 
 describe('lightingAt without the darker night', () => {
@@ -14,7 +14,7 @@ describe('lightingAt without the darker night', () => {
     expect(PHASES.length).toBeGreaterThan(30);
     for (const p of PHASES) {
       for (const light of [lightingAt(p), lightingAt(p, {}), lightingAt(p, { darkNight: false })]) {
-        const { darkWater, darkCaustic, moon: _moon, ...rest } = light;
+        const { darkWater, darkCaustic, moon: _moon, sun: _sun, ...rest } = light;
         expect(rest, `phase ${p}`).toEqual(BASELINE[String(p)]);
         expect([darkWater, darkCaustic], `phase ${p}`).toEqual([1, 1]);
       }
@@ -27,8 +27,9 @@ describe('the darker night', () => {
 
   it('changes nothing else in the lighting', () => {
     for (const p of PHASES) {
-      const { darkWater, darkCaustic, moon, ...rest } = dark(p);
+      const { darkWater, darkCaustic, moon, sun, ...rest } = dark(p);
       expect(moon, `phase ${p}`).toEqual(lightingAt(p).moon);
+      expect(sun, `phase ${p}`).toEqual(lightingAt(p).sun);
       expect(rest, `phase ${p}`).toEqual(BASELINE[String(p)]);
       expect(darkWater).toBeLessThanOrEqual(1);
       expect(darkCaustic).toBeLessThanOrEqual(1);
@@ -141,6 +142,33 @@ describe('graded backgrounds at night', () => {
   });
 });
 
+const ASPECTS = [
+  [1920, 1080],
+  [1280, 800],
+  [1024, 768],
+  [800, 800],
+  [1080, 1920],
+  [390, 844],
+] as const;
+
+/** P1: wherever `body` shows, its whole disc is on the canvas and clear of the middle 40 % of the pond. */
+function expectClearOfCentre(body: (phase: number) => Body, phases: number[]): void {
+  for (const [w, h] of ASPECTS) {
+    for (const p of phases) {
+      const m = body(p);
+      if (m.alpha === 0) continue;
+      const r = m.radius * Math.min(w, h);
+      const [x, y] = [m.pos[0] * w, m.pos[1] * h];
+      const clear = x + r < 0.3 * w || x - r > 0.7 * w || y + r < 0.3 * h || y - r > 0.7 * h;
+      expect(clear, `${w}×${h} at phase ${p}`).toBe(true);
+      // …and on the canvas.
+      expect(x - r, `${w}×${h} at phase ${p}`).toBeGreaterThan(0);
+      expect(y - r, `${w}×${h} at phase ${p}`).toBeGreaterThan(0);
+      expect(x + r, `${w}×${h} at phase ${p}`).toBeLessThan(w);
+    }
+  }
+}
+
 describe('the moon (D6, D7, P1)', () => {
   // Every phase on a 0.001 grid, plus both handoff edges.
   const grid = Array.from({ length: 1000 }, (_, k) => k / 1000);
@@ -190,26 +218,70 @@ describe('the moon (D6, D7, P1)', () => {
   });
 
   it('keeps its whole disc out of the middle 40 % of the pond, at any aspect (P1)', () => {
-    for (const [w, h] of [
-      [1920, 1080],
-      [1280, 800],
-      [1024, 768],
-      [800, 800],
-      [1080, 1920],
-      [390, 844],
-    ]) {
-      for (const p of grid) {
-        const m = moonAt(p);
-        if (m.alpha === 0) continue;
-        const r = m.radius * Math.min(w, h);
-        const [x, y] = [m.pos[0] * w, m.pos[1] * h];
-        const clear = x + r < 0.3 * w || x - r > 0.7 * w || y + r < 0.3 * h || y - r > 0.7 * h;
-        expect(clear, `${w}×${h} at phase ${p}`).toBe(true);
-        // …and on the canvas.
-        expect(x - r, `${w}×${h} at phase ${p}`).toBeGreaterThan(0);
-        expect(y - r, `${w}×${h} at phase ${p}`).toBeGreaterThan(0);
-        expect(x + r, `${w}×${h} at phase ${p}`).toBeLessThan(w);
-      }
+    expectClearOfCentre(moonAt, grid);
+  });
+});
+
+describe('the sun (D6, D8, P1)', () => {
+  const grid = Array.from({ length: 1000 }, (_, k) => k / 1000);
+
+  it("is the lighting's sun, from the phase alone", () => {
+    for (const p of [0, 0.3, 0.5, 0.74, 0.95]) {
+      expect(lightingAt(p).sun).toEqual(sunAt(p));
+      expect(lightingAt(p, { darkNight: true }).sun).toEqual(sunAt(p));
     }
+    expect(sunAt(1.5)).toEqual(sunAt(0.5));
+    expect(sunAt(-0.5)).toEqual(sunAt(0.5));
+  });
+
+  it('is gone through the night and both handoffs, [0.77, 0.23]', () => {
+    for (const p of grid.filter((p) => p <= 0.23 || p >= 0.77)) expect(sunAt(p).alpha, `phase ${p}`).toBe(0);
+    expect(sunAt(0.21).alpha).toBe(0); // dawn: the prototype drew it on the fish here
+  });
+
+  it('is fully out all day, and still out at the golden hours', () => {
+    for (const p of [0.28, 0.35, 0.5, 0.66, 0.72]) expect(sunAt(p).alpha, `phase ${p}`).toBe(1);
+    expect(sunAt(0.26).alpha).toBeGreaterThan(0.3);
+    expect(sunAt(0.74).alpha).toBeGreaterThan(0.3);
+  });
+
+  it('fades smoothly and never shares the sky with the moon', () => {
+    for (let k = 0; k < grid.length; k++) {
+      const p = grid[k];
+      const next = sunAt((k + 1) / 1000).alpha;
+      expect(Math.abs(next - sunAt(p).alpha), `phase ${p}`).toBeLessThan(0.04);
+      expect(sunAt(p).alpha + moonAt(p).alpha, `phase ${p}`).toBeLessThanOrEqual(1);
+      expect(Math.min(sunAt(p).alpha, moonAt(p).alpha), `phase ${p}`).toBe(0);
+    }
+  });
+
+  it('moves continuously from the left side over the top, out near the top-right corner', () => {
+    let moved = 0;
+    for (const p of grid.filter((p) => p >= 0.22 && p <= 0.78)) {
+      const a = sunAt(p).pos;
+      const b = sunAt(p + 0.001).pos;
+      const step = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      expect(step, `phase ${p}`).toBeLessThan(0.006);
+      moved += step;
+    }
+    expect(moved).toBeGreaterThan(0.6);
+    expect(sunAt(0.25).pos[0]).toBeLessThan(0.3); // morning: the left side
+    expect(sunAt(0.5).pos[1]).toBeLessThan(0.3); // noon: the top edge
+    // It rises where the moon rises and sets where the moon sets, in the
+    // top-right corner: never down the right side (P1: the top edge and one side).
+    for (const [sun, moon] of [
+      [0.23, 0.81],
+      [0.77, 0.19],
+    ]) {
+      expect(sunAt(sun).pos[0]).toBeCloseTo(moonAt(moon).pos[0], 9);
+      expect(sunAt(sun).pos[1]).toBeCloseTo(moonAt(moon).pos[1], 9);
+    }
+    for (const p of grid.filter((p) => sunAt(p).alpha > 0 && sunAt(p).pos[0] > 0.7)) {
+      expect(sunAt(p).pos[1], `phase ${p}`).toBeLessThan(0.3);
+    }
+  });
+
+  it('keeps its whole glitter patch out of the middle 40 % of the pond, at any aspect (P1)', () => {
+    expectClearOfCentre(sunAt, grid);
   });
 });

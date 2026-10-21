@@ -33,6 +33,9 @@ uniform vec2 uView;      // the pond's size, CSS px
 // The moon's reflection (sky feature moon; lighting.ts moonAt): xy centre as
 // a share of uView, y down; z radius as a share of its shorter side; w alpha, 0 off.
 uniform vec4 uMoon;
+// The sun's glitter (sky feature sun; lighting.ts sunAt), as uMoon; z is the
+// patch's outer edge.
+uniform vec4 uSun;
 
 layout(location = 0) out vec4 oColor; // rgb colour, a density (for the raw view)
 layout(location = 1) out vec4 oInfo;  // r glyph index, g cell class
@@ -80,6 +83,14 @@ const float CALM_FLICKER = 0.3;
 // The moon's brightness at full night (D7): dimmer than full strength, so it
 // reads as a reflection rather than an icon.
 const float MOON_GAIN = 0.85;
+// The sun's glitter, about half the prototype's (D8): the share of would-be
+// flashes dropped each flash, and the brightness of the faintest and brightest.
+const float SUN_THIN = 0.5;
+const vec2 SUN_GAIN = vec2(0.35, 0.5);
+// Glitter strength below which a cell shows plain water, and the share of the
+// patch's radius at its full-strength core.
+const float SUN_MIN = 0.45;
+const float SUN_CORE = 0.115;
 // Body specular: broad, so the highlight runs along the back.
 const float SPEC_POW = 18.0;
 
@@ -102,6 +113,12 @@ vec3 lightOn(vec3 n) {
 // The light's own hue at full brightness, for glints and highlights.
 vec3 lightHue() {
   return uLightCol / max(max(uLightCol.r, max(uLightCol.g, uLightCol.b)), 1e-3);
+}
+
+// The sun or moon mirrored on the water (glints, the sun's glitter): the
+// light's hue, part way to white.
+vec3 mirrorHue() {
+  return mix(lightHue(), vec3(1.0), 0.4);
 }
 
 struct Cell {
@@ -281,7 +298,7 @@ Cell water(vec2 p, float h, vec2 g) {
     c.dens = min(gl, 1.0);
     // Full brightness in the light's hue whatever the hour: a mirror image of
     // the sun or moon, not lit water.
-    vec3 gc = uRoles > 0.5 ? uGlintCol : mix(lightHue(), vec3(1.0), 0.4);
+    vec3 gc = uRoles > 0.5 ? uGlintCol : mirrorHue();
     c.col = gc * mix(0.8, 1.0, smoothstep(0.45, 1.0, gl));
     c.dir = lineDir(az);
     c.aux = low;
@@ -355,6 +372,38 @@ void moon(vec2 p, vec2 g, inout Cell c) {
     c.style = 0.0; // face: o and : mostly, O only at the brightest centre
     c.dens = 0.72 * lum * a;
   }
+}
+
+// The sun's reflection by day: a patch of glitter, densest at the centre,
+// that flashes cell by cell. Ripple slopes shift where each cell looks, so a
+// ring spreads it. Warm with a low sun, white at noon, never as bright as an
+// Ogon's glint. Drawn over the water and stars, under everything else; the
+// water's own glints keep their cells.
+void sun(vec2 p, vec2 g, inout Cell c) {
+  float a = uSun.w;
+  if (a < 0.02 || c.mat == M_GLINT) return;
+  float R = uSun.z * min(uView.x, uView.y);
+  vec2 dq = p + g * REFRACT * 3.0 - uSun.xy * uView;
+  float r = length(dq) / R;
+  if (r > 1.0) return;
+  vec2 cell = floor(p / uCell);
+  // Flashes 5 times a second; reduced motion slows that and holds most of
+  // each cell's brightness still.
+  float flash = floor(uTime * 5.0 * flicker());
+  // Rising and setting, the patch thins out rather than shrinking.
+  if (hash12(cell * 1.31 + flash * 0.29 + 3.0) > (1.0 - SUN_THIN) * a) return;
+  float tw = hash12(cell + flash * 0.613);
+  tw = mix(tw, hash12(cell + 0.37), uCalm * 0.7);
+  float v = (1.0 - smoothstep(SUN_CORE, 1.0, r)) * (0.35 + 0.9 * tw);
+  if (v < SUN_MIN) return;
+  c.mat = M_SUN;
+  c.dens = min(v, 1.0);
+  c.aux = 0.0;
+  c.style = 0.0;
+  // The glints' colour: the light's hue toward white in the pond; roles take
+  // the highlight and fade toward the deep water.
+  float k = mix(SUN_GAIN.x, SUN_GAIN.y, smoothstep(SUN_MIN, 1.0, v));
+  c.col = uRoles > 0.5 ? mix(uWaterDim, uGlintCol, k) : mirrorHue() * k;
 }
 
 // ---------------------------------------------------------------- fish geometry
@@ -724,6 +773,7 @@ int pickGlyph(Cell c, ivec2 cell) {
     if (style == 1) return edgeGlyph(c.dir, dens);
     return dens < 0.33 ? G_DOT : dens < 0.56 ? G_COLON : dens < 0.67 ? G_O : G_BIG_O;
   }
+  if (c.mat == M_SUN) return dens > 0.8 ? G_STAR : dens > 0.6 ? G_PLUS : G_DOT;
   if (c.mat == M_GLINT) {
     // High light: star bursts. Low light: dashes along its direction.
     if (aux > 0.55) return dens > 0.6 ? lineGlyph(c.dir, dens > 0.85 ? G_EQUALS : G_MINUS, G_PIPE) : G_DOT;
@@ -743,6 +793,7 @@ void main() {
   Cell c = water(p, h, g);
   stars(p, g, c);
   moon(p, g, c);
+  sun(p, g, c);
 
   float sh = 0.0;
   for (int f = 0; f < MAX_FISH; f++) {

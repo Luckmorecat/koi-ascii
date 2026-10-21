@@ -3,8 +3,8 @@ import { mount, open, running } from './helpers';
 import type { KoiPondOptions, KoiPondSky } from '../../src/index';
 import { GLYPHS } from '../../src/glyphs';
 
-// The `sky` option and setSky(). The darker night, the stars, the moon and
-// the fireflies draw so far; each check redraws the current state (nothing advances), so two
+// The `sky` option and setSky(): the darker night, the stars, the moon, the
+// fireflies and the sun; each check redraws the current state (nothing advances), so two
 // samples of one pond differ only by what changed in between.
 
 const BOX = { left: 0, top: 0, width: 320, height: 240 };
@@ -81,9 +81,9 @@ test('at night the defaults darken a dark pond; sky false and darkNight false do
   expect(await differing(page, 'off', 'offAgain')).toBe(0);
 });
 
-test('by day every feature, and on a light palette at night the darker night, change nothing', async ({ page }) => {
+test('by day every feature but the sun, and on a light palette at night the darker night, change nothing', async ({ page }) => {
   for (const [name, options, sky] of [
-    ['pond at noon', { time: NOON }, true],
+    ['pond at noon', { time: NOON }, { stars: true, fireflies: true, darkNight: true, moon: true, sun: false }],
     ['paper at night', { time: NIGHT, palette: 'paper' }, { stars: false, fireflies: false, darkNight: true }],
     [
       'light filter at night',
@@ -304,24 +304,28 @@ test.describe('under reduced motion', () => {
 // ---------------------------------------------------------------- moon
 
 const M_MOON = 9; // common.glsl
+const M_BODY = 5; // common.glsl
 const FISH = [2, 3, 4, 5, 6]; // M_TRAIL … M_EYE: what a fish draws
 const glyphOf = (key: keyof typeof GLYPHS) => Object.keys(GLYPHS).indexOf(key);
 const MOON_ON = { moon: true } as const;
 
 const moonCells = (c: Cells) => c.mat.flatMap((m, k) => (m === M_MOON ? [k] : []));
 
-/** The moon's centre and radius in cells and the grid size, from the lighting the frame was drawn with (dpr 1). */
-function moonInCells(page: Page, i: number): Promise<{ x: number; y: number; r: number; cols: number; rows: number }> {
-  return page.evaluate((i) => {
+/**
+ * The moon's (or the sun patch's) centre in cells, its radius in cell
+ * heights and the grid size, from the lighting the frame was drawn with (dpr 1).
+ */
+function bodyInCells(page: Page, i: number, body: 'moon' | 'sun' = 'moon'): Promise<{ x: number; y: number; r: number; cols: number; rows: number }> {
+  return page.evaluate(([i, body]) => {
     const core = window.koiTest.ponds[i].core!;
-    const r = core.renderer! as unknown as { cols: number; rows: number; info: { cellW: number; cellH: number }; light: { moon: { pos: number[]; radius: number } } };
+    const r = core.renderer! as unknown as { cols: number; rows: number; info: { cellW: number; cellH: number }; light: Record<'moon' | 'sun', { pos: number[]; radius: number }> };
     const w = core.gl.drawingBufferWidth;
     const h = core.gl.drawingBufferHeight;
     const cw = r.info.cellW;
     const ch = r.info.cellH;
     const ox = (w - r.cols * cw) >> 1;
     const oy = (h - r.rows * ch) >> 1;
-    const m = r.light.moon;
+    const m = r.light[body];
     return {
       x: (m.pos[0] * w - ox) / cw,
       y: (m.pos[1] * h - oy) / ch,
@@ -329,7 +333,7 @@ function moonInCells(page: Page, i: number): Promise<{ x: number; y: number; r: 
       cols: r.cols,
       rows: r.rows,
     };
-  }, i);
+  }, [i, body] as const);
 }
 
 test('at full night with sky.moon a disc with maria and a rim shows, clear of the centre', async ({ page }) => {
@@ -337,7 +341,7 @@ test('at full night with sky.moon a disc with maria and a rim shows, clear of th
   const i = await pond(page, { time: NIGHT, sky: MOON_ON }, BIG);
   const c = await cells(page, i);
   const moon = moonCells(c);
-  const m = await moonInCells(page, i);
+  const m = await bodyInCells(page, i);
   // About the disc's area in cells (cells are about twice as tall as wide).
   const area = Math.PI * m.r * m.r * (BIG.height / m.rows / (BIG.width / m.cols));
   expect(moon.length).toBeGreaterThan(area * 0.7);
@@ -380,34 +384,41 @@ test('the moon is off by default, shows with sky true, and only at night', async
   }
 });
 
+/** Swims every fish into the moon's or the sun's reflection, keeping its pose and trail. */
+async function swimInto(page: Page, i: number, body: 'moon' | 'sun'): Promise<void> {
+  await page.evaluate(
+    ([i, body]) => {
+      const core = window.koiTest.ponds[i].core!;
+      const r = core.renderer! as unknown as { light: Record<'moon' | 'sun', { pos: number[] }> };
+      core.redraw();
+      const [mx, my] = [r.light[body].pos[0] * 1280, r.light[body].pos[1] * 800];
+      core.pond.fish.forEach((f, n) => {
+        const k = f as unknown as { x: number; y: number; spine: Float32Array; trail: Float32Array; posed: boolean };
+        const dx = mx + (n - 1) * 40 - k.x;
+        const dy = my - k.y;
+        k.x += dx;
+        k.y += dy;
+        for (let j = 0; j < k.spine.length; j += 2) {
+          k.spine[j] += dx;
+          k.spine[j + 1] += dy;
+        }
+        for (let j = 0; j < k.trail.length; j += 3) {
+          k.trail[j] += dx;
+          k.trail[j + 1] += dy;
+        }
+        k.posed = false;
+      });
+      // One step poses them there (joints, fins, eyes).
+      core.step(1 / 60);
+    },
+    [i, body] as const,
+  );
+}
+
 test('the moon never draws over a fish, and covers the stars', async ({ page }) => {
   await page.setViewportSize({ width: BIG.width, height: BIG.height });
   const i = await pond(page, { time: NIGHT, sky: { moon: false } }, BIG);
-  // Swim every fish into the moon, keeping its pose and trail.
-  await page.evaluate((i) => {
-    const core = window.koiTest.ponds[i].core!;
-    const r = core.renderer! as unknown as { light: { moon: { pos: number[] } } };
-    core.redraw();
-    const [mx, my] = [r.light.moon.pos[0] * 1280, r.light.moon.pos[1] * 800];
-    core.pond.fish.forEach((f, n) => {
-      const k = f as unknown as { x: number; y: number; spine: Float32Array; trail: Float32Array; posed: boolean };
-      const dx = mx + (n - 1) * 40 - k.x;
-      const dy = my - k.y;
-      k.x += dx;
-      k.y += dy;
-      for (let j = 0; j < k.spine.length; j += 2) {
-        k.spine[j] += dx;
-        k.spine[j + 1] += dy;
-      }
-      for (let j = 0; j < k.trail.length; j += 3) {
-        k.trail[j] += dx;
-        k.trail[j + 1] += dy;
-      }
-      k.posed = false;
-    });
-    // One step poses them there (joints, fins, eyes).
-    core.step(1 / 60);
-  }, i);
+  await swimInto(page, i, 'moon');
   const off = await cells(page, i);
   await setSky(page, i, MOON_ON);
   const on = await cells(page, i);
@@ -416,7 +427,7 @@ test('the moon never draws over a fish, and covers the stars', async ({ page }) 
   expect(moon.length).toBeGreaterThan(0);
   expect(overFish).toEqual([]);
   // The fish did end up in the moon's disc, and kept those cells.
-  const m = await moonInCells(page, i);
+  const m = await bodyInCells(page, i);
   const [cw, ch] = [BIG.width / m.cols, BIG.height / m.rows];
   const inDisc = (k: number) => Math.hypot((k % m.cols) + 0.5 - m.x, (Math.floor(k / m.cols) + 0.5 - m.y) * (ch / cw)) < m.r * (ch / cw);
   const fishInMoon = off.mat.filter((f, k) => FISH.includes(f) && inDisc(k));
@@ -528,7 +539,7 @@ test('a firefly draws over a fish, and changes nothing else', async ({ page }) =
   await page.setViewportSize({ width: BIG.width, height: BIG.height });
   const i = await pond(page, { time: DUSK, sky: { fireflies: false } }, BIG);
   const off = await cells(page, i);
-  const fishCell = off.mat.findIndex((m) => m === 5); // M_BODY
+  const fishCell = off.mat.findIndex((m) => m === M_BODY);
   expect(fishCell).toBeGreaterThanOrEqual(0);
   // Every firefly at full brightness on that fish cell's centre.
   await page.evaluate(
@@ -567,5 +578,163 @@ test.describe('fireflies under reduced motion', () => {
       await stepFrames(page, i, 60);
     }
     expect(Math.min(...counts)).toBeGreaterThanOrEqual(10);
+  });
+});
+
+// ---------------------------------------------------------------- sun
+
+const M_SUN = 11; // common.glsl
+const SUN_ON = { sun: true } as const;
+const sunCells = (c: Cells) => c.mat.flatMap((m, k) => (m === M_SUN ? [k] : []));
+/** Rec.601 luminance of cell `k`'s scene colour, 0…255 (as glow.frag weighs it). */
+const lumAt = (c: Cells, k: number) => 0.299 * c.rgba[k * 4] + 0.587 * c.rgba[k * 4 + 1] + 0.114 * c.rgba[k * 4 + 2];
+
+/** Sun cells over `samples` frames `every` frames apart. */
+async function sunSamples(page: Page, i: number, samples: number, every: number): Promise<Cells[]> {
+  const out: Cells[] = [];
+  for (let s = 0; s < samples; s++) {
+    out.push(await cells(page, i));
+    await stepFrames(page, i, every);
+  }
+  return out;
+}
+
+test('at noon with sky.sun a patch of . + * glitter flashes, clear of the centre, no brighter than an Ogon glint', async ({ page }) => {
+  await page.setViewportSize({ width: BIG.width, height: BIG.height });
+  const i = await pond(page, { time: NOON, sky: SUN_ON, seed: 42 }, BIG);
+  // Only the Ogon stays, so the brightest fish cell is its glint.
+  await page.evaluate((i) => {
+    const fish = window.koiTest.ponds[i].core!.pond.fish;
+    const ogon = fish.filter((f) => (f as unknown as { variety: { name: string } }).variety.name === 'ogon');
+    fish.splice(0, fish.length, ...ogon);
+  }, i);
+  expect(await page.evaluate((i) => window.koiTest.ponds[i].core!.pond.fish.length, i)).toBe(1);
+  const m = await bodyInCells(page, i, 'sun');
+  const tall = BIG.height / m.rows / (BIG.width / m.cols); // cell height over width
+  const glyphs = [glyphOf('DOT'), glyphOf('PLUS'), glyphOf('STAR')];
+  let sun = 0;
+  let ogon = 0;
+  const counts: number[] = [];
+  // Every 7 frames, so most samples catch a new flash (5 a second).
+  for (const c of await sunSamples(page, i, 24, 7)) {
+    const k = sunCells(c);
+    counts.push(k.length);
+    for (const cell of k) {
+      expect(glyphs).toContain(c.glyph[cell]);
+      const [x, y] = [(cell % m.cols) + 0.5, Math.floor(cell / m.cols) + 0.5];
+      // Every glitter cell out of the middle 40 % (P1), within the patch (cells are about twice as tall as wide).
+      expect(x > 0.3 * m.cols && x < 0.7 * m.cols && y > 0.3 * m.rows && y < 0.7 * m.rows, `cell ${cell}`).toBe(false);
+      expect(Math.hypot(x - m.x, (y - m.y) * tall), `cell ${cell}`).toBeLessThan(m.r * tall + 2);
+      sun = Math.max(sun, lumAt(c, cell));
+    }
+    c.mat.forEach((mat, k) => {
+      if (mat === M_BODY) ogon = Math.max(ogon, lumAt(c, k));
+    });
+  }
+  // A sparse patch: some glitter in every frame, a small share of its area.
+  const area = Math.PI * m.r * m.r * tall;
+  expect(Math.min(...counts)).toBeGreaterThan(3);
+  expect(Math.max(...counts)).toBeLessThan(area * 0.35);
+  // The glitter changes from flash to flash.
+  expect(new Set(counts).size).toBeGreaterThan(3);
+  // Brightness: the scene colour of the brightest glitter cell against the Ogon's brightest cell (D8).
+  expect(ogon).toBeGreaterThan(150);
+  expect(sun).toBeGreaterThan(80);
+  expect(sun).toBeLessThanOrEqual(ogon);
+});
+
+test('the sun is off by default, shows with sky true, and only by day', async ({ page }) => {
+  for (const [phase, sky, on] of [
+    [0.5, undefined, false],
+    [0.5, true, true],
+    [0.35, SUN_ON, true],
+    [0.74, SUN_ON, true],
+    [0.21, SUN_ON, false], // dawn: the prototype's sun sat on the fish here
+    [0.23, SUN_ON, false],
+    [0.77, SUN_ON, false],
+    [0.95, true, false],
+  ] as const) {
+    const i = await pond(page, { time: { mode: 'fixed', phase }, sky });
+    const seen = (await sunSamples(page, i, 6, 7)).reduce((n, c) => n + sunCells(c).length, 0);
+    expect(seen > 0, `phase ${phase}, sky ${JSON.stringify(sky)}`).toBe(on);
+    await page.evaluate((i) => window.koiTest.ponds[i].handle.destroy(), i);
+  }
+});
+
+test('the glitter is warm at 0.35 and 0.74 and white at noon on the pond', async ({ page }) => {
+  await page.setViewportSize({ width: BIG.width, height: BIG.height });
+  const blueOverRed: Record<number, number> = {};
+  for (const phase of [0.35, 0.5, 0.74]) {
+    const i = await pond(page, { time: { mode: 'fixed', phase }, sky: SUN_ON }, BIG);
+    let [r, b] = [0, 0];
+    for (const c of await sunSamples(page, i, 6, 7)) {
+      for (const k of sunCells(c)) {
+        r += c.rgba[k * 4];
+        b += c.rgba[k * 4 + 2];
+      }
+    }
+    expect(r, `phase ${phase}`).toBeGreaterThan(0);
+    blueOverRed[phase] = b / r;
+    await page.evaluate((i) => window.koiTest.ponds[i].handle.destroy(), i);
+  }
+  expect(blueOverRed[0.5]).toBeGreaterThan(0.93);
+  expect(blueOverRed[0.35]).toBeLessThan(0.9);
+  expect(blueOverRed[0.74]).toBeLessThan(0.8);
+});
+
+test('the sun never draws over a fish', async ({ page }) => {
+  await page.setViewportSize({ width: BIG.width, height: BIG.height });
+  const i = await pond(page, { time: NOON, sky: { sun: false } }, BIG);
+  await swimInto(page, i, 'sun');
+  const m = await bodyInCells(page, i, 'sun');
+  const tall = BIG.height / m.rows / (BIG.width / m.cols);
+  const inPatch = (k: number) => Math.hypot((k % m.cols) + 0.5 - m.x, (Math.floor(k / m.cols) + 0.5 - m.y) * tall) < m.r * tall;
+  let glitter = 0;
+  // A few flashes, each drawn without and with the sun.
+  for (let s = 0; s < 8; s++) {
+    await setSky(page, i, { sun: false });
+    const off = await cells(page, i);
+    await setSky(page, i, SUN_ON);
+    const on = await cells(page, i);
+    if (s === 0) expect(off.mat.filter((f, k) => FISH.includes(f) && inPatch(k)).length).toBeGreaterThan(20);
+    glitter += sunCells(on).length;
+    // Fish keep every cell; the glitter only replaces water and ripples.
+    expect(off.mat.flatMap((f, k) => (FISH.includes(f) && on.mat[k] !== f ? [k] : []))).toEqual([]);
+    expect(on.mat.flatMap((f, k) => (f !== M_SUN && f !== off.mat[k] ? [k] : []))).toEqual([]);
+    await stepFrames(page, i, 7);
+  }
+  expect(glitter).toBeGreaterThan(0);
+});
+
+/** Frames, out of `frames` consecutive ones, whose glitter differs from the frame before. */
+async function flashes(page: Page, i: number, frames: number): Promise<number> {
+  let prev = sunCells(await cells(page, i)).join();
+  let n = 0;
+  for (let f = 0; f < frames; f++) {
+    await stepFrames(page, i, 1);
+    const now = sunCells(await cells(page, i)).join();
+    if (now !== prev) n++;
+    prev = now;
+  }
+  return n;
+}
+
+test('the glitter flashes about 5 times a second', async ({ page }) => {
+  await page.setViewportSize({ width: BIG.width, height: BIG.height });
+  const i = await pond(page, { time: NOON, sky: SUN_ON }, BIG);
+  await stillWater(page, i);
+  const n = await flashes(page, i, 60);
+  expect(n).toBeGreaterThanOrEqual(4);
+  expect(n).toBeLessThanOrEqual(6);
+});
+
+test.describe('the sun under reduced motion', () => {
+  test.use({ reducedMotion: 'reduce' });
+
+  test('the glitter flashes slower', async ({ page }) => {
+    await page.setViewportSize({ width: BIG.width, height: BIG.height });
+    const i = await pond(page, { time: NOON, sky: SUN_ON }, BIG);
+    await stillWater(page, i);
+    expect(await flashes(page, i, 60)).toBeLessThanOrEqual(2);
   });
 });
