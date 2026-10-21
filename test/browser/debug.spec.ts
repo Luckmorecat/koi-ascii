@@ -138,6 +138,26 @@ test('pinned viewport + reseed + step + capture is reproducible; another seed di
   expect(r.otherSeedDiffers).toBe(true);
 });
 
+test('at dusk the fireflies replay with a seed after a reseed, and setSky turns them off', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.83');
+  const r = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.setViewport({ width: 800, height: 600, dpr: 1 });
+    const frame = async (seed: number) => {
+      await k.reseed({ seed });
+      await k.step({ frames: 150 });
+      return ((await k.capture()) as { dataUrl: string }).dataUrl;
+    };
+    const a = await frame(77);
+    const b = await frame(77);
+    await k.setSky({ fireflies: false });
+    const off = await frame(77);
+    return { same: a === b, flyless: a !== off };
+  });
+  expect(r.same).toBe(true);
+  expect(r.flyless).toBe(true);
+});
+
 test('step pauses and advances the frame counter exactly', async ({ page }) => {
   await openDebug(page);
   const r = await page.evaluate(async () => {

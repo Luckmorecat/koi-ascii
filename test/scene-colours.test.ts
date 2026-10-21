@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { POND_SCENE, rolesScene } from '../src/look';
 import type { ResolvedRoles } from '../src/palette';
 import scene from '../src/shaders/scene.frag?raw';
+import fly from '../src/shaders/fly.frag?raw';
 
-// scene.frag draws only with colours fed from look.ts, so every palette
-// reaches every object (docs/colour-slots.md).
+// scene.frag, and fly.frag for the fireflies, draw only with colours fed from
+// look.ts, so every palette reaches every object (docs/colour-slots.md).
+const SHADERS = { 'scene.frag': scene, 'fly.frag': fly };
 
 // Number-only vec3s that are maths or light, not an object's colour.
 const ALLOWED = new Set([
@@ -21,18 +23,18 @@ const LIGHTING = ['uLightDir', 'uLightCol', 'uAmbient', 'uWaterTint', 'uSky'];
 const NUM = String.raw`[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?`;
 const LITERAL = new RegExp(String.raw`vec3\(\s*${NUM}(?:\s*,\s*${NUM})*\s*\)`, 'g');
 
-describe('scene.frag colours', () => {
-  it('has no colour literals: every number-only vec3 is maths or light', () => {
-    const literals = scene.match(LITERAL) ?? [];
+describe('scene colours in the shaders', () => {
+  it.each(Object.entries(SHADERS))('%s has no colour literals: every number-only vec3 is maths or light', (_, src) => {
+    const literals = src.match(LITERAL) ?? [];
     expect(literals.filter((l) => !ALLOWED.has(l))).toEqual([]);
   });
 
-  it('declares exactly the colour uniforms look.ts uploads', () => {
+  it('declare between them exactly the colour uniforms look.ts uploads', () => {
     // Both ways: a colour look.ts doesn't upload stays black on every palette.
-    const colours = [...scene.matchAll(/^\s*uniform\s+vec3\s+(\w+)\s*;/gm)]
-      .map((m) => m[1])
-      .filter((name) => !LIGHTING.includes(name));
-    expect(colours.sort()).toEqual(Object.keys(POND_SCENE).sort());
+    const colours = Object.values(SHADERS).flatMap((src) =>
+      [...src.matchAll(/^\s*uniform\s+vec3\s+(\w+)\s*;/gm)].map((m) => m[1]).filter((name) => !LIGHTING.includes(name)),
+    );
+    expect([...new Set(colours)].sort()).toEqual(Object.keys(POND_SCENE).sort());
   });
 });
 
@@ -80,5 +82,27 @@ describe('moon colour (D11)', () => {
       metallic: [0.8, 0.7, 0.3],
     };
     rolesScene(r).uMoonCol.forEach((v, i) => expect(v).toBeCloseTo(r.highlight[i] + (r.pale[i] - r.highlight[i]) * 0.25, 12));
+  });
+});
+
+describe('firefly colour (D11)', () => {
+  it('pond keeps a fixed yellow-green of its own', () => {
+    const [r, g, b] = POND_SCENE.uFlyCol;
+    expect(g).toBeGreaterThan(r);
+    expect(r).toBeGreaterThan(b);
+    expect(Math.max(r, g, b)).toBeLessThanOrEqual(1);
+  });
+
+  it('roles take the metallic, about a third toward the highlight', () => {
+    const r: ResolvedRoles = {
+      background: [0.96, 0.94, 0.9],
+      water: [0.7, 0.75, 0.78],
+      highlight: [0.11, 0.15, 0.16],
+      pale: [0.3, 0.32, 0.34],
+      ink: [0.2, 0.2, 0.22],
+      accent: [0.7, 0.2, 0.15],
+      metallic: [0.6, 0.5, 0.2],
+    };
+    rolesScene(r).uFlyCol.forEach((v, i) => expect(v).toBeCloseTo(r.metallic[i] + (r.highlight[i] - r.metallic[i]) * 0.32, 12));
   });
 });

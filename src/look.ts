@@ -7,7 +7,7 @@ import { mix, POND_ACCENT, POND_BG, POND_METALLIC, WHITE, type ResolvedPalette, 
 
 type Vec3 = [number, number, number];
 
-/** Every colour the scene pass draws with (scene.frag uniforms of the same names). */
+/** Every colour the scene pass draws with: uniforms of the same names in scene.frag, and fly.frag for the fireflies. */
 export interface SceneColors {
   uWaterDim: RGB;
   uWaterLit: RGB;
@@ -41,6 +41,8 @@ export interface SceneColors {
   uStarWarm: RGB;
   /** The moon's reflection (light), at full strength; it dims with its alpha. */
   uMoonCol: RGB;
+  /** Fireflies (pigment: their own glow, not reflected light), at full brightness. Drawn by fly.frag, not scene.frag. */
+  uFlyCol: RGB;
 }
 
 const OGON_GOLD = POND_METALLIC;
@@ -71,6 +73,7 @@ const pondScene: SceneColors = {
   uStarCool: [0.72, 0.8, 1.0],
   uStarWarm: [1.0, 0.92, 0.78],
   uMoonCol: [0.86, 0.9, 0.98],
+  uFlyCol: [0.86, 1.0, 0.42],
 };
 export const POND_SCENE: Readonly<SceneColors> = Object.freeze(pondScene);
 
@@ -112,6 +115,8 @@ export function rolesScene(r: ResolvedRoles): SceneColors {
     uStarWarm: mix(r.highlight, r.water, 0.25),
     // The moon is light too: the highlight, a quarter toward pale (D11).
     uMoonCol: mix(r.highlight, r.pale, 0.25),
+    // Fireflies: the metallic, about a third toward the highlight (D11).
+    uFlyCol: mix(r.metallic, r.highlight, 0.32),
   };
 }
 

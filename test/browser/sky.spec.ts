@@ -3,8 +3,8 @@ import { mount, open, running } from './helpers';
 import type { KoiPondOptions, KoiPondSky } from '../../src/index';
 import { GLYPHS } from '../../src/glyphs';
 
-// The `sky` option and setSky(). The darker night, the stars and the moon
-// draw so far; each check redraws the current state (nothing advances), so two
+// The `sky` option and setSky(). The darker night, the stars, the moon and
+// the fireflies draw so far; each check redraws the current state (nothing advances), so two
 // samples of one pond differ only by what changed in between.
 
 const BOX = { left: 0, top: 0, width: 320, height: 240 };
@@ -454,5 +454,118 @@ test.describe('the moon under reduced motion', () => {
     const settled = await cells(page, i);
     expect(shards(settled)).toBe(0);
     expect(Math.abs(moonCells(settled).length - moonCells(still).length)).toBeLessThanOrEqual(3);
+  });
+});
+
+// ---------------------------------------------------------------- fireflies
+
+const M_FLY = 10; // common.glsl
+const DUSK = { mode: 'fixed', phase: 0.83 } as const;
+const FIREFLY_COUNT = 14; // fireflies.ts
+const flyCells = (c: Cells) => c.mat.flatMap((m, k) => (m === M_FLY ? [k] : []));
+
+/** Runs pond `i` for `frames` frames of 1/60 s. */
+function stepFrames(page: Page, i: number, frames: number): Promise<void> {
+  return page.evaluate(
+    ([i, frames]) => {
+      for (let f = 0; f < frames; f++) window.koiTest.ponds[i].core!.step(1 / 60);
+    },
+    [i, frames] as const,
+  );
+}
+
+test('at dusk a few fireflies show, each a single . + or * cell', async ({ page }) => {
+  await page.setViewportSize({ width: BIG.width, height: BIG.height });
+  const i = await pond(page, { time: DUSK, seed: 42 }, BIG);
+  const glyphs = [glyphOf('DOT'), glyphOf('PLUS'), glyphOf('STAR')];
+  const cols = await page.evaluate((i) => (window.koiTest.ponds[i].core!.renderer as unknown as { cols: number }).cols, i);
+  let seen = 0;
+  // Sample a few seconds apart: they blink, so any one frame shows only some.
+  for (let s = 0; s < 6; s++) {
+    const c = await cells(page, i);
+    const k = flyCells(c);
+    seen += k.length;
+    expect(k.length).toBeLessThanOrEqual(FIREFLY_COUNT);
+    for (const cell of k) expect(glyphs).toContain(c.glyph[cell]);
+    // Single cells: no firefly has another beside it or below it (no clumps).
+    const set = new Set(k);
+    const touching = k.filter((cell) => (set.has(cell + 1) && (cell + 1) % cols !== 0) || set.has(cell + cols));
+    expect(touching).toEqual([]);
+    await stepFrames(page, i, 60);
+  }
+  expect(seen).toBeGreaterThan(6);
+});
+
+test('fireflies show at dusk only, and sky.fireflies or sky false turns them off', async ({ page }) => {
+  const seen = async (i: number) => {
+    let n = 0;
+    for (let s = 0; s < 8; s++) {
+      n += flyCells(await cells(page, i)).length;
+      await stepFrames(page, i, 45);
+    }
+    return n;
+  };
+  for (const [time, on] of [
+    [DUSK, true],
+    [{ mode: 'fixed', phase: 0.78 }, true],
+    [{ mode: 'fixed', phase: 0.9 }, true],
+    [NOON, false],
+    [{ mode: 'fixed', phase: 0.21 }, false], // dawn
+    [NIGHT, false],
+    [{ mode: 'fixed', phase: 0.74 }, false], // golden hour
+  ] as const) {
+    const i = await pond(page, { time, seed: 42 });
+    expect((await seen(i)) > 0, `phase ${time.phase}`).toBe(on);
+    for (const sky of [{ fireflies: false }, false] as const) {
+      await setSky(page, i, sky);
+      expect(await seen(i), `phase ${time.phase}, sky ${JSON.stringify(sky)}`).toBe(0);
+    }
+    await page.evaluate((i) => window.koiTest.ponds[i].handle.destroy(), i);
+  }
+});
+
+test('a firefly draws over a fish, and changes nothing else', async ({ page }) => {
+  await page.setViewportSize({ width: BIG.width, height: BIG.height });
+  const i = await pond(page, { time: DUSK, sky: { fireflies: false } }, BIG);
+  const off = await cells(page, i);
+  const fishCell = off.mat.findIndex((m) => m === 5); // M_BODY
+  expect(fishCell).toBeGreaterThanOrEqual(0);
+  // Every firefly at full brightness on that fish cell's centre.
+  await page.evaluate(
+    ([i, fishCell, count]) => {
+      const core = window.koiTest.ponds[i].core!;
+      // dpr 1: device px are CSS px.
+      const r = core.renderer! as unknown as { cols: number; originX: number; originY: number; info: { cellW: number; cellH: number } };
+      const x = r.originX + ((fishCell % r.cols) + 0.5) * r.info.cellW;
+      const y = r.originY + (Math.floor(fishCell / r.cols) + 0.5) * r.info.cellH;
+      const data = new Float32Array(count * 4);
+      for (let f = 0; f < count; f++) data.set([x, y, 1, 0.5], f * 4);
+      (core.pond as unknown as { packFireflies: () => Float32Array }).packFireflies = () => data;
+    },
+    [i, fishCell, FIREFLY_COUNT] as const,
+  );
+  await setSky(page, i, undefined);
+  const on = await cells(page, i);
+  expect(flyCells(on)).toEqual([fishCell]);
+  expect(on.glyph[fishCell]).toBe(glyphOf('STAR'));
+  on.mat.forEach((m, k) => {
+    if (k !== fishCell) expect(m, `cell ${k}`).toBe(off.mat[k]);
+  });
+});
+
+test.describe('fireflies under reduced motion', () => {
+  test.use({ reducedMotion: 'reduce' });
+
+  test('breathe instead of blinking: every one stays lit', async ({ page }) => {
+    await page.setViewportSize({ width: BIG.width, height: BIG.height });
+    const i = await pond(page, { time: DUSK, seed: 42 }, BIG);
+    // A breath dips under the 0.22 cut only at its faintest (0.2 of full);
+    // blinking leaves about half of them dark at any time.
+    const counts: number[] = [];
+    for (let s = 0; s < 6; s++) {
+      counts.push(flyCells(await cells(page, i)).length);
+      await stepFrames(page, i, 60);
+    }
+    expect(Math.min(...counts)).toBeGreaterThanOrEqual(10);
   });
 });

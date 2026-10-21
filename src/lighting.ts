@@ -186,7 +186,8 @@ const SHADOW_PER_COT = 0.16;
 const SHADOW_MAX = 0.24;
 
 const TAU = Math.PI * 2;
-const smooth = (a: number, b: number, x: number) => {
+/** GLSL smoothstep. */
+export const smooth = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
@@ -278,6 +279,20 @@ const STARS_FROM = 0.35;
  */
 export function starWeight(phase: number): number {
   return smooth(STARS_FROM, 1, nightWeight(phase));
+}
+
+/** The fireflies' dusk window: in after the golden hour, out into the night (never at dawn). */
+const FIREFLIES_IN: readonly [number, number] = [0.745, 0.8];
+const FIREFLIES_OUT: readonly [number, number] = [0.88, 0.95];
+
+/**
+ * How strongly the fireflies show at a phase (the `fireflies` sky feature):
+ * 0 until the golden hour ends, 1 through the evening blue hour and early
+ * night, 0 again from 0.95 through the night, the morning and the day.
+ */
+export function fireflyWeight(phase: number): number {
+  const p = ((phase % 1) + 1) % 1;
+  return smooth(FIREFLIES_IN[0], FIREFLIES_IN[1], p) * (1 - smooth(FIREFLIES_OUT[0], FIREFLIES_OUT[1], p));
 }
 
 /** What the sky features change in the lighting itself. */

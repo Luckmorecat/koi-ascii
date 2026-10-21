@@ -123,7 +123,7 @@ pond.setTime({ mode: 'clock' });
 | ----------- | ------- | ------------ |
 | `darkNight` | on      | At night, darker water and background and about half the floor caustics, so the night reads as night rather than a tinted day. Fades in and out through the blue hours; by day nothing changes. Dark palettes only: a light background stays light at night. |
 | `stars`     | on      | Reflected stars at night: a sparse field of small points (`.` `'` `` ` `` `+`, a rare `*`) that twinkle slowly. Fixed to the screen, so they don't drift with the water, but a passing ripple makes them jump. They arrive after dusk and leave before dawn, and never cover a fish. On a light palette they are dark ink, and the motes thin out at night so the stars read. |
-| `fireflies` | on      | Fireflies at dusk, over the fish. (Accepted; not drawn yet.) |
+| `fireflies` | on      | Fireflies at dusk: 14 points (`.` `+` `*` by brightness) that drift slowly and blink in short pulses, each a single character with a soft glow, drawn over the fish. They come out after the golden hour and are gone by full night; never at dawn. The same `seed` gives the same fireflies. On a light palette there is no glow, so they are the glyph alone. |
 | `moon`      | off     | The moon's reflection at night: a full disc with darker maria (`.` `:` `o`, a rare `O`) and a drawn rim, dimmer than the fish so it reads as a reflection. It rises up the left side after dusk, crosses the top through the night and is gone before dawn, always clear of the middle of the pond. A ripple through it tears it into `=` and `\|` shards that settle back. Fish swim over it. Opt-in: it is an object, and it has no placement option, so leave it off where it would sit behind your content. |
 | `sun`       | off     | The sun's reflection as glitter by day. (Accepted; not drawn yet.) |
 
@@ -341,7 +341,8 @@ logged to the console. Show your own fallback from `onError` if you want one.
   nothing: a `setTime`, `setPalette`, `setIntensity`, `setSky` or a resize of the
   container shows when it resumes.
 - With `prefers-reduced-motion: reduce`, the fish swim slower, the water
-  flickers less, the stars hold still and the moon's reflection sways slower.
+  flickers less, the stars hold still, the moon's reflection sways slower and
+  the fireflies drift slower and glow softly up and down instead of blinking.
 - On software WebGL (SwiftShader, llvmpipe and the like) the pond renders at
   a lower resolution to stay smooth.
 

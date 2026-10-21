@@ -21,7 +21,8 @@ out vec4 oGlow;
 vec3 emission(ivec2 cell) {
   vec4 s0 = texelFetch(uScene0, cell, 0);
   int mat = int(texelFetch(uScene1, cell, 0).g * 255.0 + 0.5);
-  float w = mat == M_GLINT ? 1.0
+  float w = mat == M_FLY ? 1.3
+          : mat == M_GLINT ? 1.0
           : mat == M_EYE ? 0.7
           : mat == M_MOON ? 0.5
           : mat == M_STAR ? 0.35

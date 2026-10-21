@@ -2,7 +2,7 @@
 // DOM-free (SSR-safe); mount() resolves the option once and on every setSky().
 // Not to be confused with sky.ts, the time-of-day source.
 import type { KoiPondSkyFeatures } from './index';
-import { starWeight } from './lighting';
+import { fireflyWeight, starWeight } from './lighting';
 import { warn } from './palette';
 
 /** Every sky feature, decided. */
@@ -90,4 +90,9 @@ export interface StarsFrame {
 export function starsAt(phase: number, sky: SkyFeatures, light: boolean): StarsFrame {
   const stars = sky.stars ? starWeight(phase) : 0;
   return { stars, moteThin: light ? stars : 0 };
+}
+
+/** How strongly the fireflies show at `phase` for a pond with these features: 0 when off. */
+export function firefliesAt(phase: number, sky: SkyFeatures): number {
+  return sky.fireflies ? fireflyWeight(phase) : 0;
 }
