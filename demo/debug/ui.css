@@ -1,0 +1,201 @@
+/* The ?debug panel (ui.ts). Loaded with the debug chunk only. */
+#koi-debug {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  box-sizing: border-box;
+  width: 264px;
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  padding: 6px 8px;
+  color: #b9dde2;
+  font: 11px/1.35 'JetBrains Mono', ui-monospace, monospace;
+  background: rgba(3, 10, 14, 0.82);
+  border: 1px solid rgba(127, 179, 187, 0.25);
+  border-radius: 4px;
+  user-select: none;
+  scrollbar-width: thin;
+}
+
+#koi-debug[hidden] {
+  display: none;
+}
+
+#koi-debug .header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+#koi-debug .header .tool {
+  margin: 0;
+}
+
+#koi-debug .keys {
+  margin: 2px 0 4px;
+  color: rgba(185, 221, 226, 0.6);
+  font-size: 10px;
+}
+
+#koi-debug details {
+  margin-top: 4px;
+  border-top: 1px solid rgba(127, 179, 187, 0.18);
+}
+
+#koi-debug summary {
+  padding: 3px 0 1px;
+  color: #e8f6f8;
+  cursor: pointer;
+}
+
+#koi-debug pre {
+  margin: 2px 0 4px;
+  font: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#koi-debug canvas {
+  display: block;
+  width: 240px;
+  height: 48px;
+}
+
+#koi-debug .tool {
+  margin: 4px 0;
+}
+
+#koi-debug .tool.bare {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 6px;
+}
+
+#koi-debug .tool .head {
+  display: flex;
+  gap: 6px;
+  color: rgba(185, 221, 226, 0.75);
+}
+
+#koi-debug label,
+#koi-debug .tool > div:not(.head) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 1px 0 1px 8px;
+  white-space: pre;
+}
+
+#koi-debug .prop {
+  min-width: 6ch;
+}
+
+#koi-debug .value {
+  width: 5ch;
+  text-align: right;
+}
+
+#koi-debug .track {
+  flex: 1;
+  min-width: 0;
+}
+
+#koi-debug input[type='range'] {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  margin: 2px 0 0;
+  accent-color: #7fb3bb;
+}
+
+/* Day-part ticks: inset by half the range thumb so each tick line (the
+   button's left border) sits under the thumb's centre at that phase. */
+#koi-debug .ticks {
+  position: relative;
+  height: 12px;
+  margin: 0 8px 2px;
+}
+
+#koi-debug .ticks button {
+  position: absolute;
+  top: 0;
+  padding: 0 0 0 1px;
+  color: rgba(185, 221, 226, 0.5);
+  font: 9px/12px 'JetBrains Mono', ui-monospace, monospace;
+  background: none;
+  border: 0;
+  border-left: 1px solid rgba(127, 179, 187, 0.35);
+  border-radius: 0;
+  cursor: pointer;
+}
+
+#koi-debug .ticks button:hover,
+#koi-debug .ticks button.on {
+  color: #e8f6f8;
+  border-left-color: #7fb3bb;
+}
+
+#koi-debug .readout {
+  margin: 0 0 2px 8px;
+}
+
+#koi-debug input[type='number'],
+#koi-debug select,
+#koi-debug button {
+  padding: 0 3px;
+  color: inherit;
+  font: inherit;
+  background: rgba(127, 179, 187, 0.08);
+  border: 1px solid rgba(127, 179, 187, 0.25);
+  border-radius: 2px;
+}
+
+#koi-debug input[type='number'] {
+  width: 12ch;
+}
+
+#koi-debug button {
+  margin: 1px 4px 1px 0;
+  cursor: pointer;
+}
+
+#koi-debug .tool:not(.bare) > button {
+  margin-left: 8px;
+}
+
+#koi-debug button:hover {
+  background: rgba(127, 179, 187, 0.2);
+}
+
+#koi-debug input[type='checkbox'] {
+  margin: 0;
+  accent-color: #7fb3bb;
+}
+
+#koi-debug kbd {
+  padding: 0 3px;
+  color: rgba(185, 221, 226, 0.7);
+  font: 10px/1.3 inherit;
+  border: 1px solid rgba(127, 179, 187, 0.3);
+  border-radius: 2px;
+}
+
+#koi-debug .out {
+  max-height: 160px;
+  overflow: auto;
+  padding: 3px;
+  background: rgba(127, 179, 187, 0.06);
+}
+
+#koi-debug .out.error {
+  color: #f2a3a5;
+}
+
+#koi-debug .out img {
+  display: block;
+  max-width: 100%;
+}

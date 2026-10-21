@@ -165,6 +165,117 @@ logged to the console. Show your own fallback from `onError` if you want one.
 - On software WebGL (SwiftShader, llvmpipe and the like) the pond renders at
   a lower resolution to stay smooth.
 
+## Demo debug mode
+
+The demo page (not the package) has debug tooling behind one query flag,
+`?debug`, on every build including the hosted demo. Without it the page
+loads none of the debug code: no global, no panel, no shortcuts.
+
+```
+https://luckmorecat.github.io/koi-ascii/?debug
+http://localhost:5173/?debug&seed=42&time=fixed&phase=0.8&view=raw
+```
+
+### URL params
+
+The scene lives in the URL next to `?debug`. Changes made from the panel or
+the API are written back (`history.replaceState`), so a reload or a shared
+link shows the same scene. Defaults are left out of the URL.
+
+| Param   | Values                    | Notes                                                                          |
+| ------- | ------------------------- | ------------------------------------------------------------------------------ |
+| `seed`  | `0` … `4294967295`        | Same seed, same fish. Omitted: random on every load.                           |
+| `time`  | `loop`, `fixed`, `clock`  | Default `loop`.                                                                |
+| `phase` | `0` … `1`                 | `fixed`: the phase shown. `loop`: where the day starts (default 0). A running loop never rewrites it; only an explicit set (slider, day-part tick, API) does. |
+| `cycle` | `1` … `86400`             | Loop length in seconds, default 600.                                           |
+| `view`  | `final`, `raw`            | `raw`: glyphs on the plain background, without lighting grade or glow. Needs `?debug`. |
+| `glow`  | `on`, `off`               | The halo around bright cells. Needs `?debug`.                                  |
+
+`seed`, `time`, `phase` and `cycle` also work without `?debug`. Pause and
+viewport size are not kept in the URL. The older `?perf` and `?sky=slider|loop`
+params are gone: an old `?sky=slider&phase=0.8` link now loops from 0.8;
+use `?time=fixed&phase=0.8` to hold it.
+
+### Panel and shortcuts
+
+`?debug` opens a panel (Perf, Time, Render, Scene, Capture) whose controls are
+generated from the API's tools, so everything it does an agent can do too,
+and it follows changes made through the API. Shortcuts work only with
+`?debug`, without modifier keys, and not while typing in a text or number box:
+
+| Key     | Does                 |
+| ------- | -------------------- |
+| `P`     | show / hide the panel |
+| `R`     | toggle the raw view  |
+| `Space` | pause / resume       |
+| `.`     | step one frame       |
+
+### `window.koi` for agents and humans
+
+With `?debug` the page defines `window.koi`, a self-describing tool registry
+in the style of MCP, meant to be driven through browser JS evaluation (for
+example Playwright's `page.evaluate`). The console prints a pointer to
+`await koi.help()` on load.
+
+```js
+await page.waitForFunction(() => window.koi); // the debug chunk loads on demand
+await page.evaluate(() => koi.ready); // the pond is up
+console.log(await page.evaluate(() => koi.help()));
+```
+
+- `koi.tools()`: every tool as `{ name, description, inputSchema, annotations }`.
+  `inputSchema` is a JSON Schema subset: `type: 'object'` with `properties`,
+  an optional `required` list and `additionalProperties: false` (unknown
+  arguments are rejected). Each property has a `description` and is a
+  `number` / `integer` (optional `minimum`, `maximum`), a `boolean` or a
+  `string` with an `enum`, with an optional `default` (the value used when
+  the argument is left out). `annotations` holds:
+  `section` (the panel section), `readOnly` (the call changes nothing),
+  `live` (each argument applies on its own, so the panel applies controls
+  as they change), `reflects` (the `getState()` key that holds each
+  argument's current value) and `shortcut` (`{ key, does }`).
+- `koi.call(name, args)`: always resolves, never rejects, with
+  `{ ok: true, result }` or `{ ok: false, error: { code, message } }`. Codes:
+  `unknown-tool`, `invalid-args` (the message names the path, e.g.
+  `args.phase: must be at most 1, got 2`), `not-ready`, `context-lost`,
+  `pond-failed`, `internal`. Results are plain JSON.
+- `koi.<tool>(args)`: the same call, resolving to `result` and rejecting
+  with the error object.
+- `koi.ready`: resolves once the current pond is up. It rejects with
+  `{ code, message }`: `pond-failed` if the pond can't start, `not-ready`
+  if a `reseed` replaced it before it was up. Each `reseed` gives a new
+  promise, so read `koi.ready` again after one.
+- `koi.on('change', fn)` after any call that changes state, with
+  `{ tool, state }`; `koi.on('frame', fn)` per drawn frame, including frames
+  drawn by `step` (marked `stepped: true`, and left out of `getPerf`). Both return an
+  unsubscribe function; `koi.off(event, fn)` works too. The last write wins.
+- `koi.help()`: every tool with its description, arguments and shortcut.
+
+| Tool          | Args                          | Does                                                                   |
+| ------------- | ----------------------------- | ---------------------------------------------------------------------- |
+| `getState`    |                               | The whole state: ready, paused, frame counter, time, render, seed, viewport, canvas size. |
+| `setTime`     | `mode?`, `phase?`, `cycle?`, `hold?` | Time of day; `hold` keeps the phase until a call with `hold: false`. |
+| `setDayPart`  | `part`                        | Jumps to a lighting keyframe (`night`, `blue-hour-am`, … `noon` …).    |
+| `getPerf`     |                               | fps, 1% low, frame / CPU / GPU ms (GPU `null` without the timer extension), canvas size, GPU string, software flag, seed. |
+| `setRender`   | `view?`, `glow?`              | `final` / `raw` view and the glow halo.                                |
+| `reseed`      | `seed?`                       | Remounts the pond with a seed (random if omitted), as on a fresh load of the URL. |
+| `getFish`     |                               | Each fish's variety, position, heading, speed, depth, behaviour.      |
+| `pause`, `resume` |                           | Stops and restarts the frame loop (no catch-up after a pause).        |
+| `step`        | `frames?` (1), `dt?` (1/60)   | Pauses, then simulates and draws the frames synchronously, so it works in a background tab. |
+| `capture`     |                               | Redraws the current state and returns `{ dataUrl, width, height }` (PNG). |
+| `setViewport` | `width?`, `height?`, `dpr?`   | Pins the pond to a size in CSS px (and a pixel ratio); no args fills the window again. |
+| `setPanel`    | `visible?`                    | Shows or hides the panel; no args toggles.                             |
+
+A reproducible frame, identical on every run on the same machine:
+
+```js
+await koi.setViewport({ width: 800, height: 600, dpr: 1 });
+await koi.setTime({ mode: 'fixed', phase: 0.5 });
+await koi.reseed({ seed: 42 });
+await koi.step({ frames: 120 });
+const { dataUrl } = await koi.capture();
+```
+
 ## License
 
 [MIT](./LICENSE)
