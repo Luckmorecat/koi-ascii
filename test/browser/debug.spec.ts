@@ -225,6 +225,28 @@ test('a resume during a profile waits for it, and a collapsed pond fails the pro
   expect(r.collapsed).toMatchObject({ ok: false, error: { code: 'not-ready' } });
 });
 
+test('during a profile, state-changing tools are refused and a capture still works', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.5');
+  const r = await page.evaluate(async () => {
+    const koi = window.koi!;
+    const alone = (await koi.call('profile', { frames: 200 })) as { ok: true; result: any };
+    const profile = koi.call('profile', { frames: 200 });
+    const step = await koi.call('step');
+    const palette = await koi.call('setPalette', { palette: 'mono' });
+    const captures: boolean[] = [];
+    for (let i = 0; i < 20; i++) {
+      captures.push((await koi.call('capture')).ok);
+      await new Promise((ok) => setTimeout(ok, 0));
+    }
+    const busy = (await profile) as { ok: true; result: any };
+    return { step, palette, captures, alone: alone.result, busy: busy.result };
+  });
+  expect(r.step).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+  expect(r.palette).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+  expect(r.captures.every(Boolean)).toBe(true);
+  if (r.busy.gpuTimer) expect(Object.keys(r.busy.passes).sort()).toEqual(Object.keys(r.alone.passes).sort());
+});
+
 test('step pauses and advances the frame counter exactly', async ({ page }) => {
   await openDebug(page);
   const r = await page.evaluate(async () => {

@@ -169,8 +169,10 @@ export async function profileDraws(
   /** [frame, pass, query] per draw. */
   const pending: [number, string, WebGLQuery][] = [];
   let frame = 0;
+  /** Inside one of our redraws: draws from anything else (a capture between yields) aren't timed. */
+  let timing = false;
   gl.drawArrays = (mode, first, count) => {
-    const q = gl.createQuery();
+    const q = timing ? gl.createQuery() : null;
     if (!q) return draw.call(gl, mode, first, count);
     gl.beginQuery(ext.TIME_ELAPSED_EXT, q);
     draw.call(gl, mode, first, count);
@@ -182,7 +184,12 @@ export async function profileDraws(
   try {
     for (; frame < frames; frame++) {
       const t0 = performance.now();
-      redraw();
+      timing = true;
+      try {
+        redraw();
+      } finally {
+        timing = false;
+      }
       cpuMs += performance.now() - t0;
       if (frame % 20 === 19) await yieldNow();
     }

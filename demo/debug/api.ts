@@ -113,6 +113,8 @@ export class ToolFailure extends Error {
 }
 
 const invalid = (path: string, why: string) => new ToolFailure('invalid-args', `${path}: ${why}`);
+/** The tools that change state yet may run during koi.profile: they don't change what it measures. */
+const WHILE_PROFILING = new Set(['pause', 'resume', 'setPanel']);
 const NO_ARGS: ObjectSchema = { type: 'object', properties: {}, additionalProperties: false };
 
 /** Phase as a clock time, 0 → 00:00, 0.5 → 12:00. */
@@ -799,6 +801,9 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
         }
         const checked = validate(tool.inputSchema, args);
         if (!checked.ok) return { ok: false, error: { code: 'invalid-args', message: checked.message } };
+        if (profiling && !tool.annotations.readOnly && !WHILE_PROFILING.has(tool.name)) {
+          return { ok: false, error: { code: 'not-ready', message: `A profile is running; call ${tool.name} once it ends.` } };
+        }
         if (tool.needs !== 'nothing') core(tool.needs);
         ran = tool;
         const result = await tool.run(checked.value);
