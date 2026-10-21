@@ -3,9 +3,9 @@
 // browser JS eval and the panel drives through the same calls. The registry
 // is the source of truth: koi.tools(), koi.help(), the ergonomic methods, the
 // shortcuts and the panel's controls are all generated from it.
-import type { KoiPond, KoiPondError, KoiPondTime } from '../../src/index';
+import { koiPalettes, type KoiPond, type KoiPondError, type KoiPondPaletteName, type KoiPondTime } from '../../src/index';
 import { attachHooks, DAY_PARTS, dayPartAt, LoopSource, MAX_CYCLE_S, MIN_CYCLE_S, type PondCore } from '../../src/internal';
-import { MAX_SEED, sceneTime, writeScene, type SceneState } from '../scene';
+import { MAX_SEED, sceneTime, writeScene, type PondLook, type SceneState } from '../scene';
 import { PerfRecorder } from './perf';
 import { describeProp, validate, type ObjectSchema } from './schema';
 
@@ -86,7 +86,13 @@ export interface DebugState {
     /** The phase is held (the panel's slider is being dragged). */
     held: boolean;
   };
-  render: { view: SceneState['view']; glow: boolean; glowAvailable: boolean };
+  render: {
+    view: SceneState['view'];
+    glow: boolean;
+    glowAvailable: boolean;
+    palette: SceneState['palette'];
+    intensity: number;
+  };
   scene: { seed: number | null; fish: number };
   viewport: { pinned: boolean; width: number; height: number; dpr: number };
   /** Drawing buffer size in device px. */
@@ -125,7 +131,9 @@ export const DAY_PART_IDS: readonly { id: string; at: number; name: string }[] =
 const round = (v: number, digits = 4) => Number(v.toFixed(digits));
 
 /** Mounts a pond; supplied by the page so both share one set of options. */
-export type MountPond = (seed: number, time: KoiPondTime, onError: (error: KoiPondError) => void) => KoiPond;
+export type MountPond = (seed: number, time: KoiPondTime, look: PondLook, onError: (error: KoiPondError) => void) => KoiPond;
+
+const PALETTE_NAMES = Object.keys(koiPalettes) as KoiPondPaletteName[];
 
 interface Mount {
   handle: KoiPond;
@@ -218,7 +226,8 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
     ready.catch(() => {});
     const m: Mount = { handle: null as unknown as KoiPond, core: null, error: null, ready, abandon: reject };
     current = m;
-    m.handle = mount(seed, sceneTime(scene), (error) => {
+    // The look goes in at mount, so a reseed keeps it.
+    m.handle = mount(seed, sceneTime(scene), { palette: scene.palette, intensity: scene.intensity }, (error) => {
       m.error = error;
       reject({ code: 'pond-failed', message: error.message });
       if (m === current) changed(null);
@@ -297,7 +306,13 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
         clock: clock(phase),
         held: c?.sky.holding ?? false,
       },
-      render: { view: scene.view, glow: scene.glow, glowAvailable: !c?.stats.software },
+      render: {
+        view: scene.view,
+        glow: scene.glow,
+        glowAvailable: !c?.stats.software,
+        palette: scene.palette,
+        intensity: scene.intensity,
+      },
       scene: { seed: c?.stats.seed ?? scene.seed, fish: c?.pond.fish.length ?? 0 },
       viewport: {
         pinned: !!viewport,
@@ -471,6 +486,49 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
         if (args.glow !== undefined) scene.glow = args.glow as boolean;
         // Applied again when a lost context comes back.
         applyRender(c);
+        writeUrl();
+        return state().render;
+      },
+    },
+    {
+      name: 'setPalette',
+      description:
+        'Recolours the pond with a koiPalettes preset from the next frame on; the fish carry on. pond is the ' +
+        'default look; paper is light. The raw view ignores the palette. Saved in the URL.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          palette: { type: 'string', enum: PALETTE_NAMES, default: 'pond', description: 'Preset name.' },
+        },
+        required: ['palette'],
+        additionalProperties: false,
+      },
+      annotations: { section: 'render', live: true, reflects: 'render' },
+      run: (args) => {
+        scene.palette = args.palette as KoiPondPaletteName;
+        // Through the handle, which keeps it across a lost context.
+        current.handle.setPalette(scene.palette);
+        writeUrl();
+        return state().render;
+      },
+    },
+    {
+      name: 'setIntensity',
+      description:
+        'How much of the pond shows over its background, linearly: 0 only the background, 1 the full pond. ' +
+        '0.2–0.5 suits text on top. Saved in the URL.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          intensity: { type: 'number', minimum: 0, maximum: 1, default: 1, description: '0 background only … 1 full pond.' },
+        },
+        required: ['intensity'],
+        additionalProperties: false,
+      },
+      annotations: { section: 'render', live: true, reflects: 'render' },
+      run: (args) => {
+        scene.intensity = args.intensity as number;
+        current.handle.setIntensity(scene.intensity);
         writeUrl();
         return state().render;
       },
