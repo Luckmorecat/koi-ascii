@@ -11,6 +11,8 @@ import { FISH_TEXELS, MAX_DROPS, MAX_FISH, layoutDefines } from './koi/layout';
 import { varietyDefines } from './koi/varieties';
 import { pondUnit, type Pond } from './pond';
 import { lightingAt, type Lighting } from './lighting';
+import { POND, POND_BG, WHITE, type ResolvedPalette } from './palette';
+import { asciiLook, brightnessOnly, POND_SCENE, rolesScene, type SceneColors } from './look';
 
 /** World px per ripple simulation texel. */
 const RIPPLE_PX = 5;
@@ -22,11 +24,8 @@ const FONT_MIN = 9;
 const FONT_MAX = 22;
 /** Smallest font in device px; below this the outline glyphs lose their shape. */
 const FONT_MIN_DEVICE = 11;
-const BG: [number, number, number] = [0.024, 0.075, 0.102];
 /** Halo brightness at glowStrength 1; kept low so glyphs never wash into blobs. */
 const GLOW_GAIN = 2.2;
-/** Share of the sky's reflection (warm at dawn and dusk) laid over the background. */
-const BG_SKY = 0.15;
 
 /**
  * Four passes per frame:
@@ -46,6 +45,10 @@ export class Renderer {
   phase = 0;
   /** Lighting derived from `phase` for the current frame (the glow pass reads glowStrength). */
   light: Lighting = lightingAt(0);
+  /** Active palette, already validated (see palette.ts); mount() owns it and re-applies it to a new Renderer. */
+  palette: ResolvedPalette = POND;
+  /** 0 only the background … 1 the full pond; already clamped to [0, 1]. */
+  intensity = 1;
 
   private readonly gl: WebGL2RenderingContext;
   private readonly fontFamily: string;
@@ -58,6 +61,9 @@ export class Renderer {
   private readonly glowProg: Program | null;
   private readonly fishTex: WebGLTexture;
   private readonly dropBuf = new Float32Array(MAX_DROPS * 4);
+  private readonly stopBuf = new Float32Array(5 * 3);
+  /** Scene colours for the active palette (roles replace the pond's). */
+  private sceneColors: Readonly<SceneColors> = POND_SCENE;
 
   private atlas: Atlas | null = null;
   private ripple: [Target, Target] | null = null;
@@ -118,6 +124,15 @@ export class Renderer {
       fontPx: this.atlas?.fontPx ?? 0,
       ripple: `${this.simW}x${this.simH} ${this.ripplePacked ? 'rgba8-packed' : 'rg16f'}`,
     };
+  }
+
+  /** Sets the palette and intensity; the next render() draws with them. */
+  setLook(palette: ResolvedPalette, intensity: number): void {
+    this.palette = palette;
+    this.intensity = intensity;
+    this.sceneColors = palette.mode === 'roles' ? rolesScene(palette.roles) : POND_SCENE;
+    this.stopBuf.fill(0);
+    if (palette.mode === 'ramp') palette.stops.forEach((c, i) => this.stopBuf.set(c, i * 3));
   }
 
   /** Sizes everything for a drawing buffer of devW × devH device pixels. */
@@ -183,6 +198,12 @@ export class Renderer {
   render(pond: Pond, dt: number, phase: number): void {
     this.phase = phase;
     const light = (this.light = lightingAt(phase));
+    // The raw view is a fixed reference: the pond's own colours, no palette (A13).
+    const palette = this.raw ? POND : this.palette;
+    const roles = palette.mode === 'roles';
+    const colors = this.raw ? POND_SCENE : this.sceneColors;
+    // Roles keep their hues at every hour; only the brightness follows the time (Q14).
+    const sceneLight = roles ? brightnessOnly(light) : light;
     const gl = this.gl;
     const atlas = this.atlas;
     const scene = this.scene;
@@ -219,8 +240,9 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, scene.fbo);
     gl.viewport(0, 0, this.cols, this.rows);
     const unit = pond.unit;
-    this.sceneProg
-      .use()
+    const sp = this.sceneProg.use();
+    for (const [name, c] of Object.entries(colors)) sp.vec3(name, c[0], c[1], c[2]);
+    sp.float('uRoles', roles ? 1 : 0)
       .texture('uFish', 0, this.fishTex)
       .texture('uRipple', 1, ripple[0].textures[0])
       .ivec2('uRippleSize', this.simW, this.simH)
@@ -233,10 +255,10 @@ export class Renderer {
       .float('uTime', pond.time % 65536)
       // Time-of-day lighting, all derived on the CPU from the phase.
       .vec3('uLightDir', ...light.dir)
-      .vec3('uLightCol', ...light.color)
-      .vec3('uAmbient', ...light.ambient)
-      .vec3('uWaterTint', ...light.water)
-      .vec3('uSky', ...light.sky)
+      .vec3('uLightCol', ...sceneLight.color)
+      .vec3('uAmbient', ...sceneLight.ambient)
+      .vec3('uWaterTint', ...sceneLight.water)
+      .vec3('uSky', ...sceneLight.sky)
       .float('uGlint', light.glint)
       .float('uCaustic', light.caustic)
       .float('uFloor', light.floor)
@@ -248,8 +270,9 @@ export class Renderer {
 
     // 3. Halo of the bright cells, at cell resolution. Not needed in the raw view.
     const glowProg = this.raw ? null : this.glowProg;
-    if (glowProg && this.glowTarget && !this.glow) {
-      // Switched off: an empty halo, since the ascii pass always adds it.
+    if (glowProg && this.glowTarget && (!this.glow || palette.light)) {
+      // Switched off, or a light background (no glow there, Q6): an empty
+      // halo, since the ascii pass always adds it.
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowTarget.fbo);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
@@ -265,10 +288,12 @@ export class Renderer {
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
 
-    // 4. Glyphs to the screen, on a background graded by the time of day.
+    // 4. Glyphs to the screen, on the palette's background (the pond's is
+    // graded by the time of day), recoloured by a ramp or filter.
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.devW, this.devH);
-    const bg = BG.map((v, i) => v * light.water[i] + light.sky[i] * BG_SKY) as [number, number, number];
+    const look = asciiLook(palette, light);
+    const filter = palette.mode === 'filter' ? palette : null;
     const ascii = this.asciiProg
       .use()
       .texture('uScene0', 0, scene.textures[0])
@@ -278,9 +303,17 @@ export class Renderer {
       .ivec2('uOrigin', this.originX, this.originY)
       .ivec2('uGrid', this.cols, this.rows)
       .int('uCanvasH', this.devH)
-      .vec3('uBg', ...bg)
-      .vec3('uRawBg', ...BG)
-      .int('uRaw', this.raw ? 1 : 0);
+      .vec3('uBg', ...look.bg)
+      .vec3('uRawBg', ...POND_BG)
+      .int('uRaw', this.raw ? 1 : 0)
+      .int('uLook', look.look)
+      .vec3('uOutBg', ...look.outBg)
+      .vec3s('uStops', this.stopBuf)
+      .int('uStopCount', palette.mode === 'ramp' ? palette.stops.length : 2)
+      .vec3('uTint', ...(filter?.tint ?? WHITE))
+      .float('uSaturation', filter?.saturation ?? 1)
+      .int('uInvert', filter?.invert ? 1 : 0)
+      .float('uIntensity', this.raw ? 1 : this.intensity);
     if (this.glowTarget) {
       // Bound in the raw view too (stale there, but the raw branch never reads it).
       ascii

@@ -2,6 +2,7 @@
 // its declarations as a single self-contained dist/index.d.ts (see
 // scripts/copy-types.mjs); the implementation is in mount.ts.
 import { mount } from './mount';
+import { PRESETS } from './palette';
 
 /**
  * Time of day. Phase runs over [0, 1): 0 midnight, 0.25 sunrise, 0.5 noon,
@@ -36,6 +37,57 @@ export interface KoiPondError extends Error {
   readonly code: KoiPondErrorCode;
 }
 
+/** Any CSS colour, parsed by the browser. Alpha is ignored; `var()` is not supported. */
+export type KoiPondColor = string;
+
+export type KoiPondPaletteName = 'pond' | 'mono' | 'phosphor' | 'amber' | 'paper' | 'brand';
+
+/** Gradient map: brightness picks a colour along `colors`, background first. */
+export interface KoiPondRampPalette {
+  mode: 'ramp';
+  /** 2 to 5 stops, evenly spaced. */
+  colors: KoiPondColor[];
+}
+
+/** Named slots: each glyph takes the colour of what it draws. */
+export interface KoiPondRolesPalette {
+  mode: 'roles';
+  background: KoiPondColor;
+  /** Deep water and ripples are derived from it. */
+  water?: KoiPondColor;
+  /** Glints, crests, eyes. */
+  highlight?: KoiPondColor;
+  fish?: {
+    /** White scales. */
+    pale?: KoiPondColor;
+    /** Black patches (Showa sumi). */
+    ink?: KoiPondColor;
+    /** Red markings (Kohaku/Showa hi). */
+    accent?: KoiPondColor;
+    /** Ogon gold. */
+    metallic?: KoiPondColor;
+  };
+}
+
+/** Colour filter over today's pond; keeps its hues. */
+export interface KoiPondFilterPalette {
+  mode: 'filter';
+  background?: KoiPondColor;
+  /** Default `'#ffffff'`. */
+  tint?: KoiPondColor;
+  /** 0 grey … 1 original (default). */
+  saturation?: number;
+  /** Dark glyphs on light, hues kept. */
+  invert?: boolean;
+}
+
+/**
+ * A preset name or a palette object; `mode` picks how it recolours the pond.
+ * Invalid fields fall back one by one with a `console.warn` (never a throw);
+ * an unknown preset or mode falls back to `'pond'`.
+ */
+export type KoiPondPalette = KoiPondPaletteName | KoiPondRampPalette | KoiPondRolesPalette | KoiPondFilterPalette;
+
 export interface KoiPondOptions {
   /** Default `{ mode: 'loop', cycle: 600, phase: 0 }`. */
   time?: KoiPondTime;
@@ -48,7 +100,14 @@ export interface KoiPondOptions {
    * face yourself. Default `'"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace'`.
    */
   fontFamily?: string;
-  /** CSS colour shown before the first frame and if the pond fails. Default `'#06131a'`. */
+  /** Default `'pond'`. */
+  palette?: KoiPondPalette;
+  /** 0 leaves only the background, 1 is the full pond (linear). Default 1. */
+  intensity?: number;
+  /**
+   * CSS colour shown before the first frame and if the pond fails. Default:
+   * the palette's background (and it follows `setPalette`).
+   */
   background?: string;
   /** Called (asynchronously) when WebGL2 is missing or the renderer fails. */
   onError?: (error: KoiPondError) => void;
@@ -57,12 +116,37 @@ export interface KoiPondOptions {
 export interface KoiPond {
   /** Changes the time of day live. A loop without `phase` carries on from the current phase. */
   setTime(time: KoiPondTime): void;
+  /** Changes the palette from the next frame on; the fish carry on. */
+  setPalette(palette: KoiPondPalette): void;
+  /** Changes the intensity from the next frame on; animate it for a fade. */
+  setIntensity(intensity: number): void;
   /** Stops simulating and drawing until `resume()`; combines with the off-screen pause. */
   pause(): void;
   resume(): void;
   /** Stops the pond, removes its canvas and listeners and frees the WebGL context. Safe to call twice. */
   destroy(): void;
 }
+
+/**
+ * A roles preset as frozen in `koiPalettes`, `fish` included. Still assignable
+ * to `KoiPondRolesPalette`. (A ramp's `colors` stays typed as a plain array so
+ * a preset can be passed as a palette, but it is frozen too.)
+ */
+type FrozenRoles = Readonly<KoiPondRolesPalette> & { readonly fish?: Readonly<NonNullable<KoiPondRolesPalette['fish']>> };
+
+/**
+ * Frozen preset definitions, for copying and tweaking:
+ * `{ ...koiPalettes.paper, fish: { ...koiPalettes.paper.fish, accent: '#0a7' } }`.
+ * Each preset keeps its own palette type, so its fields can be spread.
+ */
+export const koiPalettes: {
+  readonly pond: Readonly<KoiPondFilterPalette>;
+  readonly mono: Readonly<KoiPondRampPalette>;
+  readonly phosphor: Readonly<KoiPondRampPalette>;
+  readonly amber: Readonly<KoiPondRampPalette>;
+  readonly paper: FrozenRoles;
+  readonly brand: FrozenRoles;
+} = PRESETS;
 
 /**
  * Mounts a koi pond into `container`: appends a canvas that fills it (100% ×
