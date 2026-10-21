@@ -7,10 +7,12 @@
 //   npm run shot -- [query] [--size 1280x800] [--dpr 1] [--wait 2500]
 //                   [--shots 1] [--every 700] [--eval js] [--perf secs] [--out dir]
 //
-//   query   demo URL query, e.g. '?seed=7&phase=0.5' or '?debug&perf'
-//   --eval  JS run in the page after --wait, before the shots; its result is reported
+//   query   demo URL query, e.g. '?seed=7&phase=0.5' or '?debug&time=fixed&phase=0.5'
+//   --eval  JS run in the page after --wait, before the shots; its result is reported.
+//           With ?debug it can drive window.koi, e.g. for a reproducible shot:
+//           --eval 'koi.setViewport({width:800,height:600,dpr:1}).then(() => koi.reseed({seed:42})).then(() => koi.step({frames:120}))'
 //   --perf  samples requestAnimationFrame for N seconds (vsync is off, so this is
-//           real throughput); with ?perf the overlay's readout is reported too
+//           real throughput); with ?debug `await koi.getPerf()` is reported too
 import { chromium } from '@playwright/test';
 import { createServer } from 'vite';
 import fs from 'node:fs';
@@ -57,6 +59,7 @@ try {
   await page.goto(report.url);
   await page.waitForSelector('canvas', { timeout: 15_000 });
   await page.waitForTimeout(+opt.wait);
+  await page.evaluate(() => window.koi?.ready); // ?debug: the pond is up
   if (opt.eval) report.eval = await page.evaluate(opt.eval);
 
   for (let i = 0; i < +opt.shots; i++) {
@@ -85,8 +88,7 @@ try {
       const mean = dts.reduce((a, b) => a + b, 0) / dts.length;
       return { frames: dts.length, fps: +(1000 / mean).toFixed(1), p50Ms: at(0.5), p95Ms: at(0.95), maxMs: at(1) };
     }, +opt.perf * 1000);
-    const overlay = await page.$('#perf pre');
-    if (overlay) report.perf.overlay = await overlay.textContent();
+    report.perf.koi = await page.evaluate(() => window.koi?.getPerf());
   }
 } catch (e) {
   report.errors.push(`shot: ${e.message}`);
