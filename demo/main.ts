@@ -2,6 +2,8 @@ import '@fontsource/jetbrains-mono/latin-600.css';
 import './style.css';
 import { createKoiPond, type KoiPondError, type KoiPondTime } from '../src/index';
 import { readScene, sceneTime } from './scene';
+// PROTOTYPE (issue #1): palette switcher, dev server only.
+if (import.meta.env.DEV) await import('./prototype-palette-switcher');
 
 const container = document.getElementById('pond') as HTMLDivElement;
 const fallback = document.getElementById('fallback') as HTMLPreElement;

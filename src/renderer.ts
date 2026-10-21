@@ -11,6 +11,7 @@ import { FISH_TEXELS, MAX_DROPS, MAX_FISH, layoutDefines } from './koi/layout';
 import { varietyDefines } from './koi/varieties';
 import { pondUnit, type Pond } from './pond';
 import { lightingAt, type Lighting } from './lighting';
+import { proto, rgb } from './prototype-palette';
 
 /** World px per ripple simulation texel. */
 const RIPPLE_PX = 5;
@@ -281,6 +282,23 @@ export class Renderer {
       .vec3('uBg', ...bg)
       .vec3('uRawBg', ...BG)
       .int('uRaw', this.raw ? 1 : 0);
+    // PROTOTYPE (issue #1): palette model and intensity, see prototype-palette.ts.
+    const pr = proto.preset;
+    ascii
+      .int('uPModel', pr.name === 'pond' ? 0 : { A: 1, B: 2, C: 3 }[proto.variant])
+      .vec3('uPBg', ...rgb(pr.bg))
+      .vec3('uPRamp0', ...rgb(pr.ramp[0]))
+      .vec3('uPRamp1', ...rgb(pr.ramp[1]))
+      .vec3('uPRamp2', ...rgb(pr.ramp[2]))
+      .vec3('uPWater', ...rgb(pr.water))
+      .vec3('uPHi', ...rgb(pr.hi))
+      .vec3('uPPale', ...rgb(pr.pale))
+      .vec3('uPInk', ...rgb(pr.ink))
+      .vec3('uPAccent', ...rgb(pr.accent))
+      .vec3('uPTint', ...rgb(pr.tint))
+      .float('uPSat', pr.saturation)
+      .int('uPInvert', pr.invert ? 1 : 0)
+      .float('uPIntensity', proto.intensity);
     if (this.glowTarget) {
       // Bound in the raw view too (stale there, but the raw branch never reads it).
       ascii
