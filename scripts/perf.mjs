@@ -19,7 +19,8 @@
 //             an older one fails with a message. Head is the working tree, uncommitted
 //             changes included.
 //   --runs    page loads per side; the table shows the median of the runs' medians
-//             and their spread (max − min)
+//             and their spread (max − min). A run with missing timer results or a
+//             GPU disjoint event is retried, up to 3 tries.
 //   --frames  timed redraws per run (koi.profile's frames)
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
@@ -115,21 +116,27 @@ async function measureAll(baseDir) {
       }
     }
 
-    /** measure(), retried while some timer results never came back (a busy GPU): a partial run would skew the medians. */
+    /**
+     * measure(), retried while some timer results never came back (a busy GPU) or
+     * a disjoint event (a clock or power-state change) made the times unreliable:
+     * either would skew the medians.
+     */
     async function measureComplete(side, url) {
       for (let attempt = 1; ; attempt++) {
         const r = await measure(side, url);
         const short = Object.entries(r.passes).filter(([, t]) => t.n < frames);
-        if (!short.length) return r;
+        if (!short.length && !r.disjoint) return r;
         if (attempt === 3) {
-          const missing = short.map(([pass, t]) => `${pass} ${t.n}/${frames}`).join(', ');
-          throw new Error(`${side}: timer results still missing after 3 tries (${missing}); is the GPU busy?`);
+          const why = short.length
+            ? `timer results still missing (${short.map(([pass, t]) => `${pass} ${t.n}/${frames}`).join(', ')})`
+            : 'the last try hit a GPU disjoint event';
+          throw new Error(`${side}: ${why} after 3 tries; is the GPU busy?`);
         }
       }
     }
 
     for (const query of queries) {
-      const q = { query, urls: {}, cells: null, canvas: null, disjointRuns: 0, cpuMs: {}, passes: {} };
+      const q = { query, urls: {}, cells: null, canvas: null, cpuMs: {}, passes: {} };
       report.queries.push(q);
       const results = Object.fromEntries(sides.map((s) => [s, []]));
       for (const side of sides) q.urls[side] = demos[side].url(query);
@@ -141,7 +148,6 @@ async function measureAll(baseDir) {
           results[side].push(r);
           q.cells = r.cells;
           q.canvas = { width: r.width, height: r.height };
-          if (r.disjoint) q.disjointRuns++;
         }
       }
       if (process.stderr.isTTY) process.stderr.write('\r\x1b[K');
@@ -178,7 +184,6 @@ function table(q) {
     `${q.query}  ${q.canvas.width}×${q.canvas.height} px, ${q.cells.cols}×${q.cells.rows} cells, ${runs} runs × ${frames} frames, GPU µs per frame`,
   ];
   if (base) head.push(`base ${report.base.rev} (${report.base.sha.slice(0, 9)})  vs  head ${report.head.sha.slice(0, 9)}${report.head.dirty ? ' + uncommitted' : ''}`);
-  if (q.disjointRuns) head.push(`warning: ${q.disjointRuns} run(s) hit a GPU disjoint event; their times may be off`);
   const cols = base ? ['pass', 'base', '±', 'head', '±', 'Δ µs', 'Δ %'] : ['pass', 'median', '±'];
   const sign = (v) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2));
   // A pass only one side draws shows — on the other.
