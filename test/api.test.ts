@@ -77,13 +77,13 @@ describe('reseed', () => {
 
 describe('a manual draw that draws nothing', () => {
   /** Brings the first pond up with a core whose draws return `drawn()`. */
-  const up = (drawn: () => boolean) => {
+  const up = (drawn: () => boolean, renderer: object | null = {}) => {
     const core = {
       gl: { getExtension: () => null },
-      renderer: {},
+      renderer,
       stats: { frames: 0 },
       sky: { phase: 0 },
-      pond: { time: 0 },
+      pond: { time: 0, fish: [] },
       canvas: {},
       step: drawn,
       redraw: drawn,
@@ -107,6 +107,15 @@ describe('a manual draw that draws nothing', () => {
       return false;
     });
     expect(await koi.call('capture')).toMatchObject({ ok: false, error: { code: 'pond-failed' } });
+  });
+
+  it('does not report a failed pond as context-lost in getState', async () => {
+    up(() => false, null);
+    failers[0](failure('renderer-failed'));
+    expect(await koi.call('getState')).toMatchObject({
+      ok: true,
+      result: { ready: false, failed: 'renderer-failed happened', contextLost: false },
+    });
   });
 
   it('reports not-ready, not context-lost, for a collapsed pond', async () => {

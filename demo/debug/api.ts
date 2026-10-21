@@ -282,7 +282,8 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
     return {
       ready: !!c && !current.error,
       failed: current.error?.message ?? null,
-      contextLost: !!c && !c.renderer,
+      // A failed pond drops its renderer too, but it will never be restored.
+      contextLost: !!c && !c.renderer && !current.error,
       paused,
       frame: c?.stats.frames ?? 0,
       time: {
