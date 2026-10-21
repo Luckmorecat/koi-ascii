@@ -14,6 +14,30 @@ async function openDebug(page: Page, query = ''): Promise<void> {
   await page.evaluate(() => window.koi!.ready);
 }
 
+/** Largest per-channel distance of any pixel of a PNG data URL from `rgb`. */
+function farthestFrom(page: Page, dataUrl: string, rgb: [number, number, number]): Promise<number> {
+  return page.evaluate(
+    async ([dataUrl, rgb]) => {
+      const img = new Image();
+      img.src = dataUrl;
+      await img.decode();
+      const c = new OffscreenCanvas(img.width, img.height);
+      const ctx = c.getContext('2d')!;
+      ctx.drawImage(img, 0, 0);
+      const px = ctx.getImageData(0, 0, img.width, img.height).data;
+      let far = 0;
+      for (let p = 0; p < px.length; p += 4) {
+        for (let k = 0; k < 3; k++) far = Math.max(far, Math.abs(px[p + k] - rgb[k]));
+      }
+      return far;
+    },
+    [dataUrl, rgb] as const,
+  );
+}
+
+const PAPER: [number, number, number] = [0xf3, 0xef, 0xe6];
+const MONO_BG: [number, number, number] = [0x0b, 0x0b, 0x0b];
+
 let errors: string[];
 test.beforeEach(({ page }) => {
   errors = [];
@@ -39,7 +63,7 @@ test('with ?debug: koi.ready resolves and tools() lists every tool with a schema
   await expect(page.locator('#koi-debug')).toBeVisible();
   const tools = await page.evaluate(() => window.koi!.tools());
   const names = tools.map((t) => t.name);
-  for (const n of ['getState', 'setTime', 'reseed', 'step', 'capture', 'setViewport', 'getPerf', 'setRender']) {
+  for (const n of ['getState', 'setTime', 'reseed', 'step', 'capture', 'setViewport', 'getPerf', 'setRender', 'setPalette', 'setIntensity']) {
     expect(names).toContain(n);
   }
   for (const t of tools) {
@@ -152,4 +176,53 @@ test('context loss and restore each emit a change event', async ({ page }) => {
     { tool: null, contextLost: true },
     { tool: null, contextLost: false },
   ]);
+});
+
+test('?palette and ?intensity work without ?debug', async ({ page }) => {
+  await page.goto(`${DEMO}?palette=paper&intensity=0`);
+  const canvas = page.locator('#pond canvas');
+  await canvas.waitFor({ timeout: 15_000 });
+  // Intensity 0: nothing but the paper background, once the first frame is up.
+  await expect
+    .poll(async () => farthestFrom(page, `data:image/png;base64,${(await canvas.screenshot()).toString('base64')}`, PAPER), {
+      timeout: 15_000,
+    })
+    .toBeLessThanOrEqual(1);
+});
+
+test('setPalette and setIntensity: URL, state, panel controls and a reseed', async ({ page }) => {
+  await openDebug(page, '&palette=paper&intensity=0');
+  const capture = () => page.evaluate(async () => ((await (window.koi as unknown as Tools).capture()) as { dataUrl: string }).dataUrl);
+  expect(await page.evaluate(async () => (await (window.koi as unknown as Tools).getState()).render)).toMatchObject({
+    palette: 'paper',
+    intensity: 0,
+  });
+  expect(await farthestFrom(page, await capture(), PAPER)).toBeLessThanOrEqual(1);
+
+  // The panel's controls show the state and drive the tools.
+  const select = page.locator('#koi-debug select').filter({ has: page.locator('option[value="phosphor"]') });
+  await expect(select).toHaveValue('paper');
+  await select.selectOption('mono');
+  await expect.poll(() => new URL(page.url()).searchParams.get('palette')).toBe('mono');
+  expect(await farthestFrom(page, await capture(), MONO_BG)).toBeLessThanOrEqual(1);
+
+  // The panel's intensity slider drives setIntensity live.
+  const slider = page.locator('#koi-debug label').filter({ hasText: 'intensity' }).locator('input[type=range]');
+  await expect(slider).toHaveValue('0');
+  await slider.fill('0.35');
+  await expect.poll(() => new URL(page.url()).searchParams.get('intensity')).toBe('0.35');
+  expect(await page.evaluate(async () => (await (window.koi as unknown as Tools).getState()).render)).toMatchObject({
+    palette: 'mono',
+    intensity: 0.35,
+  });
+
+  // Both survive a reseed, and a non-zero intensity draws the pond again.
+  const r = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.reseed({ seed: 5 });
+    return (await k.getState()).render;
+  });
+  expect(r).toMatchObject({ palette: 'mono', intensity: 0.35 });
+  expect(new URL(page.url()).searchParams.get('intensity')).toBe('0.35');
+  expect(await farthestFrom(page, await capture(), MONO_BG)).toBeGreaterThan(10);
 });

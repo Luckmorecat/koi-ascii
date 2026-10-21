@@ -7,7 +7,16 @@ describe('readScene', () => {
   it('gives the defaults for an empty or unrelated query', () => {
     expect(readScene('')).toEqual(DEFAULT_SCENE);
     expect(readScene('?debug&foo=1')).toEqual(DEFAULT_SCENE);
-    expect(DEFAULT_SCENE).toEqual({ seed: null, time: 'loop', phase: null, cycle: null, view: 'final', glow: true });
+    expect(DEFAULT_SCENE).toEqual({
+      seed: null,
+      time: 'loop',
+      phase: null,
+      cycle: null,
+      view: 'final',
+      glow: true,
+      palette: 'pond',
+      intensity: 1,
+    });
   });
 
   it('reads every param', () => {
@@ -32,6 +41,23 @@ describe('readScene', () => {
     expect(readScene('?glow=0').glow).toBe(false);
   });
 
+  it('reads a preset palette and an intensity', () => {
+    expect(readScene('?palette=paper&intensity=0.35')).toEqual(scene({ palette: 'paper', intensity: 0.35 }));
+    for (const name of ['pond', 'mono', 'phosphor', 'amber', 'paper', 'brand'] as const) {
+      expect(readScene(`?palette=${name}`).palette).toBe(name);
+    }
+    expect(readScene('?intensity=0').intensity).toBe(0);
+  });
+
+  it('falls back to pond and full intensity for anything else', () => {
+    for (const q of ['?palette=neon', '?palette=', '?palette=Paper', '?palette=toString']) {
+      expect(readScene(q).palette).toBe('pond');
+    }
+    for (const q of ['?intensity=1.5', '?intensity=-0.1', '?intensity=', '?intensity=x']) {
+      expect(readScene(q).intensity).toBe(1);
+    }
+  });
+
   it('treats a clock as having no phase or cycle', () => {
     expect(readScene('?time=clock&phase=0.3&cycle=60')).toEqual(scene({ time: 'clock' }));
   });
@@ -52,6 +78,12 @@ describe('writeScene', () => {
 
   it('replaces earlier values of its own params', () => {
     expect(writeScene('?seed=1&debug&time=fixed&phase=0.1', scene({ seed: 2 }))).toBe('?debug&seed=2');
+    expect(writeScene('?palette=mono&intensity=0.5&debug', DEFAULT_SCENE)).toBe('?debug');
+  });
+
+  it('writes a palette and an intensity other than the defaults', () => {
+    expect(writeScene('?debug', scene({ palette: 'amber', intensity: 0.35 }))).toBe('?debug&palette=amber&intensity=0.35');
+    expect(writeScene('', scene({ intensity: 1 / 3 }))).toBe('?intensity=0.3333');
   });
 
   it('writes the time by mode', () => {
@@ -69,6 +101,8 @@ describe('writeScene', () => {
       scene({ seed: 4294967295, time: 'fixed', phase: 0.75, view: 'raw' }),
       scene({ time: 'loop', phase: 0.125, cycle: 3600, glow: false }),
       scene({ time: 'clock' }),
+      scene({ palette: 'brand', intensity: 0 }),
+      scene({ palette: 'paper', intensity: 0.25, time: 'fixed', phase: 0.5 }),
     ];
     for (const s of states) expect(readScene(writeScene('?debug', s))).toEqual(s);
   });

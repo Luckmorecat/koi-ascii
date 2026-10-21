@@ -1,12 +1,12 @@
 import type { KoiPond, KoiPondError, KoiPondErrorCode, KoiPondOptions } from './index';
 import { FONT_WEIGHT } from './glyphs';
 import { register, type PondCore, type PondStats } from './internal';
+import { parseCssColor, resolveIntensity, resolvePalette } from './palette';
 import { MIN_POND_PX, Pond } from './pond';
 import { Renderer } from './renderer';
 import { Sky, timeSource } from './sky';
 
 const DEFAULT_FONT_FAMILY = '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace';
-const DEFAULT_BACKGROUND = '#06131a';
 /** Backing-store budget (device px) when WebGL runs on a CPU rasteriser. */
 const SOFTWARE_MAX_PIXELS = 2_100_000;
 
@@ -32,6 +32,11 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       ? options.seed >>> 0
       : (Math.random() * 2 ** 32) >>> 0;
   const sky = new Sky(timeSource(options.time, 0));
+  // The look lives here, not in the Renderer, so it survives a lost context
+  // (a restored context builds a fresh Renderer) and a setter called before
+  // the renderer is up.
+  let palette = resolvePalette(options.palette, parseCssColor);
+  let intensity = resolveIntensity(options.intensity, 1, true);
 
   // The canvas is the only thing added to the page. Its own background paints
   // the box before the first frame and after a failure, so the container's
@@ -41,7 +46,8 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
   canvas.style.display = 'block';
   canvas.style.width = '100%';
   canvas.style.height = '100%';
-  canvas.style.backgroundColor = options.background || DEFAULT_BACKGROUND;
+  // An explicit background keeps this colour; otherwise it follows the palette.
+  canvas.style.backgroundColor = options.background || palette.css;
   // Only a pond that takes input on its own canvas may block touch scrolling.
   if (interactive === 'canvas') canvas.style.touchAction = 'none';
   container.append(canvas);
@@ -113,6 +119,17 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
   const handle: KoiPond = {
     setTime(time) {
       if (!destroyed) sky.setSource(timeSource(time, sky.phase));
+    },
+    setPalette(next) {
+      if (destroyed) return;
+      palette = resolvePalette(next, parseCssColor);
+      if (!options.background) canvas.style.backgroundColor = palette.css;
+      renderer?.setLook(palette, intensity);
+    },
+    setIntensity(next) {
+      if (destroyed) return;
+      intensity = resolveIntensity(next, intensity, false);
+      renderer?.setLook(palette, intensity);
     },
     pause() {
       paused = true;
@@ -204,6 +221,7 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
     const createRenderer = (): boolean => {
       try {
         renderer = new Renderer(ctx, fontFamily, software);
+        renderer.setLook(palette, intensity);
         sizeDirty = true;
         return true;
       } catch (err) {
