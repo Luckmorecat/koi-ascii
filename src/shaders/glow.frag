@@ -23,7 +23,7 @@ vec3 emission(ivec2 cell) {
   int mat = int(texelFetch(uScene1, cell, 0).g * 255.0 + 0.5);
   float w = mat == M_FLY ? 1.3
           : mat == M_GLINT ? 1.0
-          : mat == M_SUN ? 0.9
+          : mat == M_SUN ? 1.2
           : mat == M_EYE ? 0.7
           : mat == M_MOON ? 0.5
           : mat == M_STAR ? 0.35

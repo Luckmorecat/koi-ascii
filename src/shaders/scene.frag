@@ -68,6 +68,7 @@ uniform float uRoles;    // 1 in roles mode: glints take uGlintCol, not the ligh
 uniform vec3 uStarCool;  // reflected stars, coolest …
 uniform vec3 uStarWarm;  // … to warmest
 uniform vec3 uMoonCol;   // the moon's reflection at full strength
+uniform vec3 uSunCol;    // the sun's glitter at full strength
 
 // Ripple slope (height per px) that reads as a full-strength crest.
 const float RIPPLE_GAIN = 28.0;
@@ -83,10 +84,11 @@ const float CALM_FLICKER = 0.3;
 // The moon's brightness at full night (D7): dimmer than full strength, so it
 // reads as a reflection rather than an icon.
 const float MOON_GAIN = 0.85;
-// The sun's glitter, about half the prototype's (D8): the share of would-be
-// flashes dropped each flash, and the brightness of the faintest and brightest.
+// The sun's glitter, half the prototype's density (D8): the share of would-be
+// flashes dropped each flash, and the brightness of the faintest and brightest,
+// below the Ogon's glints.
 const float SUN_THIN = 0.5;
-const vec2 SUN_GAIN = vec2(0.35, 0.5);
+const vec2 SUN_GAIN = vec2(0.6, 0.9);
 // Glitter strength below which a cell shows plain water, and the share of the
 // patch's radius at its full-strength core.
 const float SUN_MIN = 0.45;
@@ -376,7 +378,7 @@ void moon(vec2 p, vec2 g, inout Cell c) {
 
 // The sun's reflection by day: a patch of glitter, densest at the centre,
 // that flashes cell by cell. Ripple slopes shift where each cell looks, so a
-// ring spreads it. Warm with a low sun, white at noon, never as bright as an
+// ring spreads it. Gold at noon, amber with a low sun, never as bright as an
 // Ogon's glint. Drawn over the water and stars, under everything else; the
 // water's own glints keep their cells.
 void sun(vec2 p, vec2 g, inout Cell c) {
@@ -400,10 +402,10 @@ void sun(vec2 p, vec2 g, inout Cell c) {
   c.dens = min(v, 1.0);
   c.aux = 0.0;
   c.style = 0.0;
-  // The glints' colour: the light's hue toward white in the pond; roles take
-  // the highlight and fade toward the deep water.
+  // The pond tints its gold by the light's hue, so it deepens with a low sun;
+  // roles take the highlight and fade toward the deep water.
   float k = mix(SUN_GAIN.x, SUN_GAIN.y, smoothstep(SUN_MIN, 1.0, v));
-  c.col = uRoles > 0.5 ? mix(uWaterDim, uGlintCol, k) : mirrorHue() * k;
+  c.col = uRoles > 0.5 ? mix(uWaterDim, uSunCol, k) : uSunCol * mirrorHue() * k;
 }
 
 // ---------------------------------------------------------------- fish geometry

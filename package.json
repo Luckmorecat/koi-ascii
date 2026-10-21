@@ -46,6 +46,7 @@
     "prepublishOnly": "npm run typecheck && npm run build",
     "test:browser": "playwright test",
     "shot": "node --experimental-strip-types scripts/shot.mjs",
+    "shots": "node --experimental-strip-types scripts/shots.mjs",
     "perf": "node --experimental-strip-types scripts/perf.mjs"
   },
   "devDependencies": {

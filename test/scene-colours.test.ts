@@ -108,7 +108,15 @@ describe('firefly colour (D11)', () => {
 });
 
 describe('sun colour (D11)', () => {
-  it("roles: the sun's glitter shares the glints' colour, the highlight", () => {
+  it('pond keeps a gold of its own', () => {
+    const [r, g, b] = POND_SCENE.uSunCol;
+    expect(r).toBeGreaterThan(g);
+    expect(g).toBeGreaterThan(b);
+    expect(b).toBeGreaterThan(0.4);
+    expect(Math.max(r, g, b)).toBeLessThanOrEqual(1);
+  });
+
+  it("roles: the sun's glitter takes the highlight, like the glints", () => {
     const r: ResolvedRoles = {
       background: [0.96, 0.94, 0.9],
       water: [0.7, 0.75, 0.78],
@@ -118,10 +126,9 @@ describe('sun colour (D11)', () => {
       accent: [0.7, 0.2, 0.15],
       metallic: [0.6, 0.5, 0.2],
     };
-    expect(rolesScene(r).uGlintCol).toEqual(r.highlight);
-    // scene.frag's sun() draws with uGlintCol in roles and the light's hue in the pond.
+    expect(rolesScene(r).uSunCol).toEqual(r.highlight);
+    // scene.frag's sun() tints uSunCol by the light's hue in the pond only.
     const sun = scene.slice(scene.indexOf('void sun('), scene.indexOf('// ----', scene.indexOf('void sun(')));
-    expect(sun).toContain('uGlintCol');
-    expect(sun).toContain('mirrorHue()');
+    expect(sun).toContain('uSunCol * mirrorHue()');
   });
 });
