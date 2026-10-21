@@ -264,11 +264,17 @@ function resolveFilter(p: Record<string, unknown>, parse: ParseColor): ResolvedP
   if (typeof p.invert === 'boolean') invert = p.invert;
   else if (p.invert !== undefined) warn(`palette invert must be true or false; using false.`);
 
+  // Valid but nearly invisible: the filter adds light glyphs on a dark
+  // background and, inverted, takes dark ink off a light one.
+  const light = background ? isLight(background) : false;
+  if (light && !invert) warn(`a light filter background needs invert: true, or the glyphs barely show.`);
+  if (!light && invert) warn(`invert: true needs a light filter background, or the glyphs barely show.`);
+
   return {
     mode: 'filter',
     background,
     css: background ? toCss(background) : POND_BACKGROUND,
-    light: background ? isLight(background) : false,
+    light,
     tint,
     saturation,
     invert,

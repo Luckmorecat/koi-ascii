@@ -247,6 +247,14 @@ describe('resolvePalette', () => {
       expect(warn).toHaveBeenCalledTimes(4);
     });
 
+    it('warns when invert does not match the background, and still uses it', () => {
+      expect(resolvePalette({ mode: 'filter', background: '#f5f2ea' }, parse)).toMatchObject({ light: true, invert: false });
+      expect(resolvePalette({ mode: 'filter', invert: true }, parse)).toMatchObject({ background: null, invert: true });
+      expect(resolvePalette({ mode: 'filter', background: '#101010', invert: true }, parse)).toMatchObject({ light: false, invert: true });
+      expect(warn).toHaveBeenCalledTimes(3);
+      expect(String(warn.mock.calls[0])).toContain('invert: true');
+    });
+
     it('clamps saturation into [0, 1]', () => {
       expect(resolvePalette({ mode: 'filter', saturation: 3 }, parse)).toMatchObject({ saturation: 1 });
       expect(resolvePalette({ mode: 'filter', saturation: -1 }, parse)).toMatchObject({ saturation: 0 });
