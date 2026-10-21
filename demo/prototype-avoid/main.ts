@@ -6,6 +6,7 @@ import '@fontsource/jetbrains-mono/latin-600.css';
 import './style.css';
 import { createKoiPond } from '../../src/index';
 import { attachHooks, type PondCore } from '../../src/internal';
+import { profileDraws } from '../debug/perf';
 import { rectSdf, type AvoidZone } from '../../src/koi/koi';
 
 interface Knobs {
@@ -180,4 +181,35 @@ setInterval(() => {
 }, 250);
 
 // Shot/eval hook: lets scripts/shot.mjs read the state.
-(window as unknown as { proto: unknown }).proto = { knobs, stats, get zones() { return core?.pond.avoid; } };
+(window as unknown as { proto: unknown }).proto = {
+  knobs,
+  stats,
+  get zones() {
+    return core?.pond.avoid;
+  },
+  /** GPU µs per pass over `frames` redraws of the paused frame, plus CPU ms per sim step and per zone measure. */
+  async profile(frames = 400) {
+    const c = core!;
+    const r = c.renderer!;
+    const names = new Map<WebGLProgram, string>();
+    for (const [key, value] of Object.entries(r)) {
+      const h = (value as { handle?: unknown } | null)?.handle;
+      if (key.endsWith('Prog') && h instanceof WebGLProgram) names.set(h, key.slice(0, -4));
+    }
+    handle.pause();
+    try {
+      const gpu = await profileDraws(c.gl, names, () => c.redraw(), frames);
+      // Sim only: 1/60 s = 2 fixed steps of 1/120 s, zones as they are now.
+      const n = 2000;
+      let t0 = performance.now();
+      for (let i = 0; i < n; i++) c.pond.update(1 / 60);
+      const simMs = (performance.now() - t0) / n;
+      t0 = performance.now();
+      for (let i = 0; i < n; i++) measure();
+      const measureMs = (performance.now() - t0) / n;
+      return { gpu, simMs, measureMs, zones: c.pond.avoid.length };
+    } finally {
+      handle.resume();
+    }
+  },
+};

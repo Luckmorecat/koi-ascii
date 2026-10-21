@@ -38,10 +38,13 @@ Library side: see the `PROTOTYPE avoid-zones` blocks in `src/koi/koi.ts` (soft w
    - With `push=0.4` the trapping went to about 0%.
    - Steering is a nice-to-have bias. Fade is the safety net.
 6. **The CSS scrim (E) helps the cards but not the headline.** A large headline over a bright koi stays busy, and a scrim box behind a headline looks heavy. It is still the right answer for opaque UI such as modals and nav bars. The library feature is about text sitting directly on the water.
-7. **Cost.**
-   - Calling `getBoundingClientRect` on 8 elements every frame took about 0.015 ms per frame.
+7. **Cost: negligible.** Measured with `node --experimental-strip-types demo/prototype-avoid/perf.mjs` on a Radeon RX 9060 XT, seed 42. Each number is the median of 5 page loads.
+   - **GPU:** the scene pass took 25–26 µs at 1280×800 and 20–23 µs at 390×844@3 in every variant. The differences are within the run-to-run spread (up to 3.6 µs), so the mask over 8 rounded rects costs nothing measurable. The whole frame took 66–67 µs and 75–79 µs.
+   - **Steering (B and D):** sim time per 60 Hz frame went from about 28 µs to 34–41 µs. That is about 10–13 µs for 3 fish × 8 zones × 2 probes. Fade alone (C) adds about 0.5 µs.
+   - **Measuring zones:** calling `getBoundingClientRect` and `getComputedStyle` on 6–8 elements took about 9–10 µs per frame, on a page whose layout isn't changing. On a page that changes layout every frame, the read forces that layout, and the cost is the page's own. The real implementation should read `border-radius` once rather than every frame.
+   - **Worst case (B):** about 23 µs of CPU per frame, which is roughly 0.14% of a 16.7 ms frame.
+   - **Not measured:** variant E's `backdrop-filter` runs in the browser compositor. Neither the WebGL timers nor the headless rAF rate capture it.
    - With off-screen culling, 8 uniform slots were enough for the whole page while scrolling: at most 8 zones were visible at once, 6 on a phone.
-   - The shader loop over 8 rounded-rect SDFs had no visible cost on the GPU.
 8. **Pointer.** With `interactive: 'window'`, hovering a card attracts curious fish under it. With fade this is fine and even nice. With steering it fights the attraction.
 
 ## Recommendation for the real implementation
