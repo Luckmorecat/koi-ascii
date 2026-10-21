@@ -135,9 +135,9 @@ createKoiPond(el, { sky: { moon: true } }); // the defaults plus the moon
 
 - Omitted: the defaults above.
 - `true`: every feature on. `false`: every feature off, which is the pond
-  exactly as it looked in 0.2.
+  exactly as it looked in 0.1.
 - An object changes only the features it names: `{ moon: true }` adds the
-  moon to the defaults, `{ darkNight: false }` keeps the 0.2 night water.
+  moon to the defaults, `{ darkNight: false }` keeps the 0.1 night water.
 
 Invalid values never throw: a feature that is not `true` or `false` keeps its
 default, an unknown feature is ignored, and anything that is neither a
@@ -145,7 +145,7 @@ boolean nor an object gives the defaults, each with a
 `console.warn('koi-ascii: …')`.
 
 ```js
-createKoiPond(el, { sky: false }); // the 0.2 pond
+createKoiPond(el, { sky: false }); // the 0.1 pond
 pond.setSky({ sun: true }); // defaults plus the sun, from the next frame
 ```
 
@@ -260,7 +260,7 @@ feature, see "Night sky"): the water and a time-of-day graded background (`pond`
 `filter` with a dark `background`) at about ×0.7, and fewer caustics. A
 `roles` background and a `ramp`'s first stop are never graded, so they keep
 their colour; the water drawn on them still darkens. Turn it
-off with `sky: { darkNight: false }`, or `sky: false` for the 0.2 look.
+off with `sky: { darkNight: false }`, or `sky: false` for the 0.1 look.
 
 In `ramp` and `roles`, the time of day changes only brightness, so the hues
 stay on your palette. `filter` (and so `pond`) keeps the full sky colours:
@@ -393,7 +393,7 @@ link shows the same scene. Defaults are left out of the URL.
 | `glow`  | `on`, `off`               | The halo around bright cells. Needs `?debug`.                                  |
 | `palette` | `pond`, `mono`, `phosphor`, `amber`, `paper`, `brand` | A preset (custom palettes can't go in the URL). Default `pond`; anything else is `pond`. |
 | `intensity` | `0` … `1`               | Default 1.                                                                     |
-| `sky`   | `all` (or `on`), `none` (or `off`), or the features that are on, comma-separated: `stars,fireflies,darkNight,moon,sun` | Default `stars,fireflies,darkNight` (left out of the URL); `none` is the 0.2 pond. Anything unreadable gives the defaults. |
+| `sky`   | `all` (or `on`), `none` (or `off`), or the features that are on, comma-separated: `stars,fireflies,darkNight,moon,sun` | Default `stars,fireflies,darkNight` (left out of the URL); `none` is the 0.1 pond. Anything unreadable gives the defaults. |
 
 `seed`, `time`, `phase`, `cycle`, `palette`, `intensity` and `sky` also work without
 `?debug`. Pause and

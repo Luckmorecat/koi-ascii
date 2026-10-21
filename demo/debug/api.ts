@@ -542,7 +542,7 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
       description:
         'Turns night-sky features on or off from the next frame on; the fish carry on. Omitted features keep ' +
         'their current value. Defaults: stars, fireflies and darkNight (darker water at night on dark ' +
-        'palettes) on, moon and sun off; all off is the 0.2 pond. Saved in the URL.',
+        'palettes) on, moon and sun off; all off is the 0.1 pond. Saved in the URL.',
       inputSchema: {
         type: 'object',
         properties: {
