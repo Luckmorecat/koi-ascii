@@ -9,6 +9,16 @@
 
 export type Vec3 = [number, number, number];
 
+/** A body's reflection on the water: the moon by night (the sun's will follow the same arc machinery). */
+export interface Body {
+  /** Centre as a share of the pond's width and height, y down. */
+  pos: [number, number];
+  /** Radius as a share of the pond's shorter side. */
+  radius: number;
+  /** 0 hidden … 1 fully out. */
+  alpha: number;
+}
+
 export interface Lighting {
   /** Unit vector toward the sun (day) or moon (night). */
   dir: Vec3;
@@ -46,6 +56,8 @@ export interface Lighting {
   darkWater: number;
   /** Darker night: multiplies the density of flat water (floor caustics and motes), so fewer show. 1 by day or when off. */
   darkCaustic: number;
+  /** The moon's reflection (the `moon` sky feature draws it), on its own arc: see moonAt(). */
+  moon: Body;
 }
 
 // Everything except the direction, keyed by phase.
@@ -187,14 +199,55 @@ const mix3 = (a: Vec3, b: Vec3, t: number): Vec3 => [mix(a[0], b[0], t), mix(a[1
  */
 function arcDir(angle: number, lo: number, hi: number): Vec3 {
   const el = mix(lo, hi, Math.max(0, Math.sin(angle)));
-  // Azimuth before tilt: rises left, crosses the top of the screen, sets right.
+  const { x, y, length } = azimuth(angle);
+  const h = Math.cos(el) / length;
+  return [x * h, y * h, Math.sin(el)];
+}
+
+/** A body's azimuth on screen at `angle` (see arcDir), tilted; its length is the same before and after. */
+function azimuth(angle: number): { x: number; y: number; length: number } {
+  // Before tilt: rises left, crosses the top of the screen, sets right.
   const ax = -Math.cos(angle);
   const ay = -0.8 * Math.sin(angle);
-  const al = Math.hypot(ax, ay) || 1;
   const c = Math.cos(PATH_TILT);
   const s = Math.sin(PATH_TILT);
-  const h = Math.cos(el) / al;
-  return [(ax * c - ay * s) * h, (ax * s + ay * c) * h, Math.sin(el)];
+  return { x: ax * c - ay * s, y: ax * s + ay * c, length: Math.hypot(ax, ay) || 1 };
+}
+
+/** Half-extents of the path reflections follow, as a share of the pond's width and height. */
+const BODY_BAND: readonly [number, number] = [0.38, 0.36];
+/** Superellipse exponent of that path: high enough to hug the edges, low enough to round the corners. */
+const BODY_ROUND = 6;
+/** The moon's radius as a share of the pond's shorter side. */
+const MOON_RADIUS = 0.065;
+/** The moon fades in after the evening handoff and out before the morning one (D6). */
+const MOON_RISE: readonly [number, number] = [1 - HANDOFF[0], 1 - HANDOFF[0] + 0.05];
+const MOON_SET: readonly [number, number] = [HANDOFF[0] - 0.05, HANDOFF[0]];
+
+/**
+ * Where a body's reflection sits: toward its azimuth from the pond's centre,
+ * out on a rounded rectangle near the edges (half-extents BODY_BAND, as a
+ * share of width and height). Every point of it is at least 0.89 of the way
+ * out in one axis, so with a radius under 0.12 of the shorter side the disc
+ * keeps clear of the middle 40 % of the pond at any aspect (P1).
+ */
+function bodyPos(angle: number): [number, number] {
+  const { x, y } = azimuth(angle);
+  const n = (Math.abs(x) / BODY_BAND[0]) ** BODY_ROUND + (Math.abs(y) / BODY_BAND[1]) ** BODY_ROUND;
+  const k = n ** (-1 / BODY_ROUND);
+  return [0.5 + x * k, 0.5 + y * k];
+}
+
+/**
+ * The moon's reflection at `phase`, from the phase alone (not the blended
+ * light direction, which swings to the sun at the handoff). It follows the
+ * moon's own azimuth: up the left side after dusk, over the top through the
+ * night, and gone before either handoff starts, so it never jumps.
+ */
+export function moonAt(phase: number): Body {
+  const p = ((phase % 1) + 1) % 1;
+  const alpha = 1 - smooth(MOON_SET[0], MOON_SET[1], p) * (1 - smooth(MOON_RISE[0], MOON_RISE[1], p));
+  return { pos: bodyPos(TAU * (p - 0.75)), radius: MOON_RADIUS, alpha };
 }
 
 /** Flat water and a graded background at full night with `darkNight` on. */
@@ -273,6 +326,7 @@ export function lightingAt(phase: number, options: LightingOptions = {}): Lighti
     shadowAlpha: mix(a.shadowAlpha, b.shadowAlpha, t),
     glowStrength: mix(a.glow, b.glow, t),
     ...darkNight(options.darkNight ? nightWeight(p) : 0),
+    moon: moonAt(p),
   };
 }
 

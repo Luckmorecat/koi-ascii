@@ -12,6 +12,7 @@ precision highp sampler2D;
 #define M_EYE 6
 #define M_GLINT 7
 #define M_STAR 8  // a reflected star (sky feature `stars`)
+#define M_MOON 9  // the moon's reflection (sky feature `moon`)
 
 #define PI 3.14159265
 #define TAU 6.28318531

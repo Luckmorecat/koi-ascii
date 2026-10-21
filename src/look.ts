@@ -39,6 +39,8 @@ export interface SceneColors {
   uStarCool: RGB;
   /** The warmest reflected star. */
   uStarWarm: RGB;
+  /** The moon's reflection (light), at full strength; it dims with its alpha. */
+  uMoonCol: RGB;
 }
 
 const OGON_GOLD = POND_METALLIC;
@@ -68,6 +70,7 @@ const pondScene: SceneColors = {
   uAddTint: WHITE,
   uStarCool: [0.72, 0.8, 1.0],
   uStarWarm: [1.0, 0.92, 0.78],
+  uMoonCol: [0.86, 0.9, 0.98],
 };
 export const POND_SCENE: Readonly<SceneColors> = Object.freeze(pondScene);
 
@@ -107,6 +110,8 @@ export function rolesScene(r: ResolvedRoles): SceneColors {
     // Stars are light: the highlight, some a little toward the water (D11).
     uStarCool: r.highlight,
     uStarWarm: mix(r.highlight, r.water, 0.25),
+    // The moon is light too: the highlight, a quarter toward pale (D11).
+    uMoonCol: mix(r.highlight, r.pale, 0.25),
   };
 }
 

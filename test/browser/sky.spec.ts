@@ -3,9 +3,9 @@ import { mount, open, running } from './helpers';
 import type { KoiPondOptions, KoiPondSky } from '../../src/index';
 import { GLYPHS } from '../../src/glyphs';
 
-// The `sky` option and setSky(). The darker night and the stars draw so far;
-// each check redraws the current state (nothing advances), so two samples of
-// one pond differ only by what changed in between.
+// The `sky` option and setSky(). The darker night, the stars and the moon
+// draw so far; each check redraws the current state (nothing advances), so two
+// samples of one pond differ only by what changed in between.
 
 const BOX = { left: 0, top: 0, width: 320, height: 240 };
 const NOON = { mode: 'fixed', phase: 0.5 } as const;
@@ -298,5 +298,161 @@ test.describe('under reduced motion', () => {
     const settled = await cells(page, i);
     expect(moved(still, ring)).toBeGreaterThan(10);
     expect(moved(still, settled)).toBeLessThanOrEqual(1);
+  });
+});
+
+// ---------------------------------------------------------------- moon
+
+const M_MOON = 9; // common.glsl
+const FISH = [2, 3, 4, 5, 6]; // M_TRAIL … M_EYE: what a fish draws
+const glyphOf = (key: keyof typeof GLYPHS) => Object.keys(GLYPHS).indexOf(key);
+const MOON_ON = { moon: true } as const;
+
+const moonCells = (c: Cells) => c.mat.flatMap((m, k) => (m === M_MOON ? [k] : []));
+
+/** The moon's centre and radius in cells and the grid size, from the lighting the frame was drawn with (dpr 1). */
+function moonInCells(page: Page, i: number): Promise<{ x: number; y: number; r: number; cols: number; rows: number }> {
+  return page.evaluate((i) => {
+    const core = window.koiTest.ponds[i].core!;
+    const r = core.renderer! as unknown as { cols: number; rows: number; info: { cellW: number; cellH: number }; light: { moon: { pos: number[]; radius: number } } };
+    const w = core.gl.drawingBufferWidth;
+    const h = core.gl.drawingBufferHeight;
+    const cw = r.info.cellW;
+    const ch = r.info.cellH;
+    const ox = (w - r.cols * cw) >> 1;
+    const oy = (h - r.rows * ch) >> 1;
+    const m = r.light.moon;
+    return {
+      x: (m.pos[0] * w - ox) / cw,
+      y: (m.pos[1] * h - oy) / ch,
+      r: (m.radius * Math.min(w, h)) / ch,
+      cols: r.cols,
+      rows: r.rows,
+    };
+  }, i);
+}
+
+test('at full night with sky.moon a disc with maria and a rim shows, clear of the centre', async ({ page }) => {
+  await page.setViewportSize({ width: BIG.width, height: BIG.height });
+  const i = await pond(page, { time: NIGHT, sky: MOON_ON }, BIG);
+  const c = await cells(page, i);
+  const moon = moonCells(c);
+  const m = await moonInCells(page, i);
+  // About the disc's area in cells (cells are about twice as tall as wide).
+  const area = Math.PI * m.r * m.r * (BIG.height / m.rows / (BIG.width / m.cols));
+  expect(moon.length).toBeGreaterThan(area * 0.7);
+  expect(moon.length).toBeLessThan(area * 1.5);
+  // Every moon cell out of the middle 40 % (P1).
+  for (const k of moon) {
+    // Row 0 of the scene target is the top of the pond.
+    const [x, y] = [(k % m.cols) + 0.5, Math.floor(k / m.cols) + 0.5];
+    const inside = x > 0.3 * m.cols && x < 0.7 * m.cols && y > 0.3 * m.rows && y < 0.7 * m.rows;
+    expect(inside, `cell ${k}`).toBe(false);
+  }
+  const glyphs = moon.map((k) => c.glyph[k]);
+  const count = (key: keyof typeof GLYPHS) => glyphs.filter((g) => g === glyphOf(key)).length;
+  const face = ['DOT', 'COLON', 'O', 'BIG_O'] as const;
+  const faces = face.reduce((n, g) => n + count(g), 0);
+  // The face is mostly o and :, with maria; O is rare.
+  expect(count('O') + count('COLON')).toBeGreaterThan(faces * 0.6);
+  expect(count('COLON')).toBeGreaterThan(0);
+  expect(count('BIG_O')).toBeGreaterThan(0);
+  expect(count('BIG_O')).toBeLessThan(faces * 0.1);
+  // The rim: outline glyphs, as a fish's.
+  const rim = (['LPAREN', 'RPAREN', 'SLASH', 'BSLASH', 'UNDERSCORE', 'MINUS'] as const).reduce((n, g) => n + count(g), 0);
+  expect(rim).toBeGreaterThan(8);
+  // Still water: no shards.
+  expect(count('EQUALS') + count('PIPE')).toBe(0);
+});
+
+test('the moon is off by default, shows with sky true, and only at night', async ({ page }) => {
+  for (const [time, sky, on] of [
+    [NIGHT, undefined, false],
+    [NIGHT, true, true],
+    [{ mode: 'fixed', phase: 0.05 }, MOON_ON, true],
+    [{ mode: 'fixed', phase: 0.19 }, MOON_ON, false],
+    [NOON, true, false],
+    [{ mode: 'fixed', phase: 0.81 }, MOON_ON, false],
+  ] as const) {
+    const i = await pond(page, { time, sky });
+    expect(moonCells(await cells(page, i)).length > 0, `phase ${time.phase}, sky ${JSON.stringify(sky)}`).toBe(on);
+    await page.evaluate((i) => window.koiTest.ponds[i].handle.destroy(), i);
+  }
+});
+
+test('the moon never draws over a fish, and covers the stars', async ({ page }) => {
+  await page.setViewportSize({ width: BIG.width, height: BIG.height });
+  const i = await pond(page, { time: NIGHT, sky: { moon: false } }, BIG);
+  // Swim every fish into the moon, keeping its pose and trail.
+  await page.evaluate((i) => {
+    const core = window.koiTest.ponds[i].core!;
+    const r = core.renderer! as unknown as { light: { moon: { pos: number[] } } };
+    core.redraw();
+    const [mx, my] = [r.light.moon.pos[0] * 1280, r.light.moon.pos[1] * 800];
+    core.pond.fish.forEach((f, n) => {
+      const k = f as unknown as { x: number; y: number; spine: Float32Array; trail: Float32Array; posed: boolean };
+      const dx = mx + (n - 1) * 40 - k.x;
+      const dy = my - k.y;
+      k.x += dx;
+      k.y += dy;
+      for (let j = 0; j < k.spine.length; j += 2) {
+        k.spine[j] += dx;
+        k.spine[j + 1] += dy;
+      }
+      for (let j = 0; j < k.trail.length; j += 3) {
+        k.trail[j] += dx;
+        k.trail[j + 1] += dy;
+      }
+      k.posed = false;
+    });
+    // One step poses them there (joints, fins, eyes).
+    core.step(1 / 60);
+  }, i);
+  const off = await cells(page, i);
+  await setSky(page, i, MOON_ON);
+  const on = await cells(page, i);
+  const moon = moonCells(on);
+  const overFish = moon.filter((k) => FISH.includes(off.mat[k]));
+  expect(moon.length).toBeGreaterThan(0);
+  expect(overFish).toEqual([]);
+  // The fish did end up in the moon's disc, and kept those cells.
+  const m = await moonInCells(page, i);
+  const [cw, ch] = [BIG.width / m.cols, BIG.height / m.rows];
+  const inDisc = (k: number) => Math.hypot((k % m.cols) + 0.5 - m.x, (Math.floor(k / m.cols) + 0.5 - m.y) * (ch / cw)) < m.r * (ch / cw);
+  const fishInMoon = off.mat.filter((f, k) => FISH.includes(f) && inDisc(k));
+  expect(fishInMoon.length).toBeGreaterThan(20);
+  off.mat.forEach((f, k) => {
+    if (FISH.includes(f)) expect(on.mat[k], `cell ${k}`).toBe(f);
+  });
+  // Outside the moon nothing changed; inside it, it replaced water, ripples and stars only.
+  on.mat.forEach((m, k) => {
+    if (m !== M_MOON) expect(m, `cell ${k}`).toBe(off.mat[k]);
+  });
+});
+
+test.describe('the moon under reduced motion', () => {
+  test.use({ reducedMotion: 'reduce' });
+
+  test('a tap breaks it into = and | shards that settle back', async ({ page }) => {
+    await page.setViewportSize({ width: BIG.width, height: BIG.height });
+    const i = await pond(page, { time: NIGHT, sky: MOON_ON }, BIG);
+    await stillWater(page, i);
+    const shards = (c: Cells) => moonCells(c).filter((k) => c.glyph[k] === glyphOf('EQUALS') || c.glyph[k] === glyphOf('PIPE')).length;
+    const still = await cells(page, i);
+    expect(shards(still)).toBe(0);
+    await page.evaluate((i) => {
+      const core = window.koiTest.ponds[i].core!;
+      const r = core.renderer! as unknown as { light: { moon: { pos: number[] } } };
+      core.pond.pointerDown(r.light.moon.pos[0] * 1280 + 20, r.light.moon.pos[1] * 800, performance.now() / 1000);
+      for (let f = 0; f < 20; f++) core.step(1 / 60);
+    }, i);
+    const torn = await cells(page, i);
+    expect(shards(torn)).toBeGreaterThan(5);
+    await page.evaluate((i) => {
+      for (let f = 0; f < 900; f++) window.koiTest.ponds[i].core!.step(1 / 60);
+    }, i);
+    const settled = await cells(page, i);
+    expect(shards(settled)).toBe(0);
+    expect(Math.abs(moonCells(settled).length - moonCells(still).length)).toBeLessThanOrEqual(3);
   });
 });

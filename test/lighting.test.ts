@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { lightingAt, nightWeight, starWeight, type Lighting } from '../src/lighting';
+import { lightingAt, moonAt, nightWeight, starWeight, type Lighting } from '../src/lighting';
 import { asciiLook, graded } from '../src/look';
 import { POND, POND_BG, type ResolvedPalette } from '../src/palette';
 import before from './fixtures/lighting-0.2.json';
 
 // test/fixtures/lighting-0.2.json is lightingAt() as it was at f374243 (0.2),
 // sampled every 0.05 and around each keyframe and handoff.
-const BASELINE = before as unknown as Record<string, Omit<Lighting, 'darkWater' | 'darkCaustic'>>;
+const BASELINE = before as unknown as Record<string, Omit<Lighting, 'darkWater' | 'darkCaustic' | 'moon'>>;
 const PHASES = Object.keys(BASELINE).map(Number);
 
 describe('lightingAt without the darker night', () => {
@@ -14,7 +14,7 @@ describe('lightingAt without the darker night', () => {
     expect(PHASES.length).toBeGreaterThan(30);
     for (const p of PHASES) {
       for (const light of [lightingAt(p), lightingAt(p, {}), lightingAt(p, { darkNight: false })]) {
-        const { darkWater, darkCaustic, ...rest } = light;
+        const { darkWater, darkCaustic, moon: _moon, ...rest } = light;
         expect(rest, `phase ${p}`).toEqual(BASELINE[String(p)]);
         expect([darkWater, darkCaustic], `phase ${p}`).toEqual([1, 1]);
       }
@@ -27,7 +27,8 @@ describe('the darker night', () => {
 
   it('changes nothing else in the lighting', () => {
     for (const p of PHASES) {
-      const { darkWater, darkCaustic, ...rest } = dark(p);
+      const { darkWater, darkCaustic, moon, ...rest } = dark(p);
+      expect(moon, `phase ${p}`).toEqual(lightingAt(p).moon);
       expect(rest, `phase ${p}`).toEqual(BASELINE[String(p)]);
       expect(darkWater).toBeLessThanOrEqual(1);
       expect(darkCaustic).toBeLessThanOrEqual(1);
@@ -137,5 +138,78 @@ describe('graded backgrounds at night', () => {
   it("leaves a roles background as given (it is never graded)", () => {
     const brand = { mode: 'roles', background: [0.08, 0.06, 0.16], css: '#14102a', light: false } as unknown as ResolvedPalette;
     expect(asciiLook(brand, darkNight).outBg).toEqual([0.08, 0.06, 0.16]);
+  });
+});
+
+describe('the moon (D6, D7, P1)', () => {
+  // Every phase on a 0.001 grid, plus both handoff edges.
+  const grid = Array.from({ length: 1000 }, (_, k) => k / 1000);
+
+  it('is the lighting\'s moon, from the phase alone', () => {
+    for (const p of [0, 0.05, 0.5, 0.9, 0.95]) {
+      expect(lightingAt(p).moon).toEqual(moonAt(p));
+      expect(lightingAt(p, { darkNight: true }).moon).toEqual(moonAt(p));
+    }
+    expect(moonAt(1.95)).toEqual(moonAt(0.95));
+    expect(moonAt(-0.05)).toEqual(moonAt(0.95));
+  });
+
+  it('is gone from the morning handoff to the evening one, [0.19, 0.81]', () => {
+    for (const p of grid.filter((p) => p >= 0.19 && p <= 0.81)) expect(moonAt(p).alpha, `phase ${p}`).toBe(0);
+    expect(moonAt(0.19).alpha).toBe(0);
+    expect(moonAt(0.81).alpha).toBe(0);
+  });
+
+  it('is fully out at full night', () => {
+    for (const p of [0, 0.05, 0.1, 0.9, 0.95, 0.999]) expect(moonAt(p).alpha, `phase ${p}`).toBe(1);
+  });
+
+  it('fades in and out smoothly, within the night', () => {
+    for (let k = 0; k < grid.length; k++) {
+      const p = grid[k];
+      const next = moonAt((k + 1) / 1000).alpha;
+      expect(Math.abs(next - moonAt(p).alpha), `phase ${p}`).toBeLessThan(0.04);
+      expect(moonAt(p).alpha, `phase ${p}`).toBeLessThanOrEqual(nightWeight(p) + 1e-12);
+    }
+  });
+
+  it('moves continuously across its whole window, midnight included', () => {
+    const visible = [...grid, 1].filter((p) => p > 0.8 || p < 0.2);
+    let moved = 0;
+    for (const p of visible) {
+      const a = moonAt(p).pos;
+      const b = moonAt(p + 0.001).pos;
+      const step = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      expect(step, `phase ${p}`).toBeLessThan(0.006);
+      moved += step;
+    }
+    // It travels: from one side, over the top.
+    expect(moved).toBeGreaterThan(0.6);
+    expect(moonAt(0.82).pos[0]).toBeLessThan(0.3);
+    expect(moonAt(0).pos[1]).toBeLessThan(0.3);
+  });
+
+  it('keeps its whole disc out of the middle 40 % of the pond, at any aspect (P1)', () => {
+    for (const [w, h] of [
+      [1920, 1080],
+      [1280, 800],
+      [1024, 768],
+      [800, 800],
+      [1080, 1920],
+      [390, 844],
+    ]) {
+      for (const p of grid) {
+        const m = moonAt(p);
+        if (m.alpha === 0) continue;
+        const r = m.radius * Math.min(w, h);
+        const [x, y] = [m.pos[0] * w, m.pos[1] * h];
+        const clear = x + r < 0.3 * w || x - r > 0.7 * w || y + r < 0.3 * h || y - r > 0.7 * h;
+        expect(clear, `${w}×${h} at phase ${p}`).toBe(true);
+        // …and on the canvas.
+        expect(x - r, `${w}×${h} at phase ${p}`).toBeGreaterThan(0);
+        expect(y - r, `${w}×${h} at phase ${p}`).toBeGreaterThan(0);
+        expect(x + r, `${w}×${h} at phase ${p}`).toBeLessThan(w);
+      }
+    }
   });
 });

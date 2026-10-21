@@ -29,6 +29,10 @@ uniform float uShadowAlpha;
 uniform float uCalm;     // 1 under reduced motion: flicker slows further
 uniform float uStars;    // reflected stars (sky feature stars): 0 none … 1 full night
 uniform float uMoteThin; // share of motes taken away (light palettes with stars); 0 keeps every mote
+uniform vec2 uView;      // the pond's size, CSS px
+// The moon's reflection (sky feature moon; lighting.ts moonAt): xy centre as
+// a share of uView, y down; z radius as a share of its shorter side; w alpha, 0 off.
+uniform vec4 uMoon;
 
 layout(location = 0) out vec4 oColor; // rgb colour, a density (for the raw view)
 layout(location = 1) out vec4 oInfo;  // r glyph index, g cell class
@@ -60,6 +64,7 @@ uniform vec3 uAddTint;   // multiplies light added on a fish: specular, rim, cau
 uniform float uRoles;    // 1 in roles mode: glints take uGlintCol, not the light's hue
 uniform vec3 uStarCool;  // reflected stars, coolest …
 uniform vec3 uStarWarm;  // … to warmest
+uniform vec3 uMoonCol;   // the moon's reflection at full strength
 
 // Ripple slope (height per px) that reads as a full-strength crest.
 const float RIPPLE_GAIN = 28.0;
@@ -72,6 +77,9 @@ const float REFRACT = 220.0;
 const float GLINT_TILT = 2.0;
 // Flicker rate under reduced motion, on top of the pond's own 0.75 slowdown.
 const float CALM_FLICKER = 0.3;
+// The moon's brightness at full night (D7): dimmer than full strength, so it
+// reads as a reflection rather than an icon.
+const float MOON_GAIN = 0.85;
 // Body specular: broad, so the highlight runs along the back.
 const float SPEC_POW = 18.0;
 
@@ -307,6 +315,46 @@ void stars(vec2 p, vec2 g, inout Cell c) {
   float k = 0.35 + 0.6 * min(v, 1.0);
   vec3 col = mix(uStarCool, uStarWarm, c.aux);
   c.col = uRoles > 0.5 ? mix(uWaterDim, col, k) : col * k;
+}
+
+// The moon's reflection: a full disc with maria and a drawn rim. Ripple
+// slopes shift where each cell looks, so a passing ring tears it into
+// shards; steep cells inside become bright crest dashes. Drawn over the
+// water and stars, under everything else.
+void moon(vec2 p, vec2 g, inout Cell c) {
+  float a = uMoon.w;
+  if (a < 0.02) return;
+  float R = uMoon.z * min(uView.x, uView.y);
+  // A slow sideways wobble, as on moving water; slower under reduced motion.
+  vec2 wob = vec2(sin(p.y * 0.21 + uTime * 1.3 * flicker()) * 1.2, 0.0);
+  vec2 dq = p + g * REFRACT * 3.0 + wob - uMoon.xy * uView;
+  float dist = length(dq);
+  if (dist > R * 1.4) return;
+  vec2 n = dist > 1e-3 ? dq / dist : vec2(1.0, 0.0);
+  float cv = coverage(dist - R, n);
+  if (cv < 0.25) return;
+  float r = dist / R;
+  float maria = smoothstep(-0.05, 0.2, fbm(dq / R * 1.7 + 5.0));
+  float lum = (0.95 - 0.45 * maria) * (1.0 - 0.25 * r * r);
+  c.mat = M_MOON;
+  c.aux = 0.0;
+  // The pond dims toward black; roles fade toward the deep water, so on a
+  // light palette the moon is an ink drawing that fades out to the water.
+  float k = (0.35 + 0.5 * lum) * MOON_GAIN * a;
+  c.col = uRoles > 0.5 ? mix(uWaterDim, uMoonCol, k) : uMoonCol * k;
+  if (length(g) * RIPPLE_GAIN > 0.35) {
+    c.style = 2.0; // a shard along the crest
+    c.dens = a;
+    c.dir = lineDir(vec2(-g.y, g.x));
+    c.col = mix(c.col, uRoles > 0.5 ? uGlintCol : vec3(1.0), 0.3 * a);
+  } else if (cv < 0.8) {
+    c.style = 1.0; // rim
+    c.dens = cv;
+    c.dir = cellNormal(n);
+  } else {
+    c.style = 0.0; // face: o and : mostly, O only at the brightest centre
+    c.dens = 0.72 * lum * a;
+  }
 }
 
 // ---------------------------------------------------------------- fish geometry
@@ -671,6 +719,11 @@ int pickGlyph(Cell c, ivec2 cell) {
     if (dens > 0.4) return aux < 0.5 ? G_QUOTE : G_BACKTICK;
     return G_DOT;
   }
+  if (c.mat == M_MOON) {
+    if (style == 2) return lineGlyph(c.dir, G_EQUALS, G_PIPE);
+    if (style == 1) return edgeGlyph(c.dir, dens);
+    return dens < 0.33 ? G_DOT : dens < 0.56 ? G_COLON : dens < 0.67 ? G_O : G_BIG_O;
+  }
   if (c.mat == M_GLINT) {
     // High light: star bursts. Low light: dashes along its direction.
     if (aux > 0.55) return dens > 0.6 ? lineGlyph(c.dir, dens > 0.85 ? G_EQUALS : G_MINUS, G_PIPE) : G_DOT;
@@ -689,6 +742,7 @@ void main() {
 
   Cell c = water(p, h, g);
   stars(p, g, c);
+  moon(p, g, c);
 
   float sh = 0.0;
   for (int f = 0; f < MAX_FISH; f++) {

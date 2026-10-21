@@ -285,7 +285,9 @@ export class Renderer {
       // Reduced motion: flicker (ogon twinkle, water glints) runs slower still.
       .float('uCalm', pond.calm ? 1 : 0)
       .float('uStars', stars.stars)
-      .float('uMoteThin', stars.moteThin);
+      .float('uMoteThin', stars.moteThin)
+      .vec2('uView', this.devW / this.dpr, this.devH / this.dpr)
+      .vec4('uMoon', light.moon.pos[0], light.moon.pos[1], light.moon.radius, this.sky.moon ? light.moon.alpha : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // 3. Halo of the bright cells, at cell resolution. Not needed in the raw view.

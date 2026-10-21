@@ -9,7 +9,7 @@ import scene from '../src/shaders/scene.frag?raw';
 // Number-only vec3s that are maths or light, not an object's colour.
 const ALLOWED = new Set([
   'vec3(0.0, 0.0, 1.0)', // up: the flat-water normal and the half vector toward the viewer
-  'vec3(1.0)', // glints whiten the light's hue (light, not pigment)
+  'vec3(1.0)', // glints and moon shards whiten toward white (light, not pigment)
   'vec3(0.2126, 0.7152, 0.0722)', // Rec.709 luminance weights
   'vec3(0.75)', // eyes never darker than this share of the light
 ]);
@@ -58,5 +58,27 @@ describe('star colours (D11)', () => {
     const scene = rolesScene(r);
     expect(scene.uStarCool).toEqual(r.highlight);
     scene.uStarWarm.forEach((v, i) => expect(v).toBeCloseTo(r.highlight[i] + (r.water[i] - r.highlight[i]) * 0.25, 12));
+  });
+});
+
+describe('moon colour (D11)', () => {
+  it('pond keeps a fixed blue-white of its own', () => {
+    const [r, g, b] = POND_SCENE.uMoonCol;
+    expect(b).toBeGreaterThan(r);
+    expect(Math.min(r, g, b)).toBeGreaterThan(0.8);
+    expect(Math.max(r, g, b)).toBeLessThanOrEqual(1);
+  });
+
+  it('roles take the highlight, a quarter toward pale', () => {
+    const r: ResolvedRoles = {
+      background: [0.08, 0.06, 0.16],
+      water: [0.2, 0.25, 0.4],
+      highlight: [0.95, 0.92, 1.0],
+      pale: [0.7, 0.6, 0.9],
+      ink: [0.1, 0.1, 0.12],
+      accent: [0.9, 0.3, 0.5],
+      metallic: [0.8, 0.7, 0.3],
+    };
+    rolesScene(r).uMoonCol.forEach((v, i) => expect(v).toBeCloseTo(r.highlight[i] + (r.pale[i] - r.highlight[i]) * 0.25, 12));
   });
 });
