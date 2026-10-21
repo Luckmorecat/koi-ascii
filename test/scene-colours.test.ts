@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { POND_SCENE } from '../src/look';
+import { POND_SCENE, rolesScene } from '../src/look';
+import type { ResolvedRoles } from '../src/palette';
 import scene from '../src/shaders/scene.frag?raw';
 
 // scene.frag draws only with colours fed from look.ts, so every palette
@@ -32,5 +33,30 @@ describe('scene.frag colours', () => {
       .map((m) => m[1])
       .filter((name) => !LIGHTING.includes(name));
     expect(colours.sort()).toEqual(Object.keys(POND_SCENE).sort());
+  });
+});
+
+describe('star colours (D11)', () => {
+  it('pond keeps fixed star hues of its own, from cool to warm', () => {
+    const [cool, warm] = [POND_SCENE.uStarCool, POND_SCENE.uStarWarm];
+    expect(cool[2]).toBeGreaterThan(cool[0]);
+    expect(warm[0]).toBeGreaterThan(warm[2]);
+    expect([...cool, ...warm].every((v) => v >= 0 && v <= 1)).toBe(true);
+  });
+
+  it('roles take the highlight, the warmest a quarter toward the water', () => {
+    // Paper-like: dark ink highlight on a light background.
+    const r: ResolvedRoles = {
+      background: [0.96, 0.94, 0.9],
+      water: [0.7, 0.75, 0.78],
+      highlight: [0.11, 0.15, 0.16],
+      pale: [0.3, 0.32, 0.34],
+      ink: [0.2, 0.2, 0.22],
+      accent: [0.7, 0.2, 0.15],
+      metallic: [0.6, 0.5, 0.2],
+    };
+    const scene = rolesScene(r);
+    expect(scene.uStarCool).toEqual(r.highlight);
+    scene.uStarWarm.forEach((v, i) => expect(v).toBeCloseTo(r.highlight[i] + (r.water[i] - r.highlight[i]) * 0.25, 12));
   });
 });

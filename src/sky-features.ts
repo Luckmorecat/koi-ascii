@@ -2,6 +2,7 @@
 // DOM-free (SSR-safe); mount() resolves the option once and on every setSky().
 // Not to be confused with sky.ts, the time-of-day source.
 import type { KoiPondSkyFeatures } from './index';
+import { starWeight } from './lighting';
 import { warn } from './palette';
 
 /** Every sky feature, decided. */
@@ -75,4 +76,18 @@ export function resolveSky(input: unknown): SkyFeatures {
     else warn(`sky.${key} must be true or false; got ${show(value)}, using ${DEFAULT_SKY[key]}.`);
   }
   return Object.freeze(out);
+}
+
+/** What the scene pass draws for the stars at one phase. */
+export interface StarsFrame {
+  /** Star strength, 0 (none) … 1 (full night). */
+  stars: number;
+  /** Share of the motes taken away, 0 … 1: only on a light palette, so its stars read among them (D10). */
+  moteThin: number;
+}
+
+/** Stars at `phase` for a pond with these features, on a light palette or not. 0 for both when off. */
+export function starsAt(phase: number, sky: SkyFeatures, light: boolean): StarsFrame {
+  const stars = sky.stars ? starWeight(phase) : 0;
+  return { stars, moteThin: light ? stars : 0 };
 }

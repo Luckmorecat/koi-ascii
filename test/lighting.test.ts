@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lightingAt, nightWeight, type Lighting } from '../src/lighting';
+import { lightingAt, nightWeight, starWeight, type Lighting } from '../src/lighting';
 import { asciiLook, graded } from '../src/look';
 import { POND, POND_BG, type ResolvedPalette } from '../src/palette';
 import before from './fixtures/lighting-0.2.json';
@@ -75,6 +75,46 @@ describe('nightWeight', () => {
     expect(nightWeight(0.795)).toBeCloseTo(0.5, 10);
     expect(nightWeight(1.95)).toBe(nightWeight(0.95));
     expect(nightWeight(-0.05)).toBe(nightWeight(0.95));
+  });
+});
+
+describe('starWeight', () => {
+  it('is 0 by day, golden hours and the start of each blue hour included', () => {
+    for (const p of [0.215, 0.22, 0.24, 0.265, 0.34, 0.5, 0.66, 0.745, 0.76, 0.78]) {
+      expect(starWeight(p), `phase ${p}`).toBe(0);
+    }
+  });
+
+  it('is 1 at full night', () => {
+    for (const p of [0, 0.05, 0.1, 0.15, 0.17, 0.83, 0.9, 0.95, 0.999]) expect(starWeight(p), `phase ${p}`).toBe(1);
+  });
+
+  it('arrives after the night and leaves before it: smoothstep(0.35, 1, night)', () => {
+    for (let p = 0; p < 1; p += 0.0025) {
+      const night = nightWeight(p);
+      const t = Math.min(1, Math.max(0, (night - 0.35) / 0.65));
+      expect(starWeight(p), `phase ${p}`).toBeCloseTo(t * t * (3 - 2 * t), 12);
+      if (night <= 0.35) expect(starWeight(p), `phase ${p}`).toBe(0);
+    }
+    // Mid evening blue hour: the night is half in, the stars barely.
+    expect(starWeight(0.795)).toBeGreaterThan(0);
+    expect(starWeight(0.795)).toBeLessThan(0.2);
+  });
+
+  it('fades in through the evening blue hour and out through the morning one', () => {
+    let prev = starWeight(0.76);
+    for (let p = 0.76; p <= 0.84; p += 0.001) {
+      const w = starWeight(p);
+      expect(w).toBeGreaterThanOrEqual(prev - 1e-12);
+      expect(Math.abs(w - prev)).toBeLessThan(0.05);
+      prev = w;
+    }
+    prev = starWeight(0.16);
+    for (let p = 0.16; p <= 0.25; p += 0.001) {
+      const w = starWeight(p);
+      expect(w).toBeLessThanOrEqual(prev + 1e-12);
+      prev = w;
+    }
   });
 });
 

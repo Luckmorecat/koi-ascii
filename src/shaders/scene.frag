@@ -27,6 +27,8 @@ uniform float uDarkCaustic; // darker night: flat water density × (fewer causti
 uniform vec2 uShadow;    // shadow offset, px, away from the light
 uniform float uShadowAlpha;
 uniform float uCalm;     // 1 under reduced motion: flicker slows further
+uniform float uStars;    // reflected stars (sky feature stars): 0 none … 1 full night
+uniform float uMoteThin; // share of motes taken away (light palettes with stars); 0 keeps every mote
 
 layout(location = 0) out vec4 oColor; // rgb colour, a density (for the raw view)
 layout(location = 1) out vec4 oInfo;  // r glyph index, g cell class
@@ -56,6 +58,8 @@ uniform vec3 uGoldDust;
 uniform vec3 uGlintCol;  // water glints in roles mode (the highlight)
 uniform vec3 uAddTint;   // multiplies light added on a fish: specular, rim, caustics
 uniform float uRoles;    // 1 in roles mode: glints take uGlintCol, not the light's hue
+uniform vec3 uStarCool;  // reflected stars, coolest …
+uniform vec3 uStarWarm;  // … to warmest
 
 // Ripple slope (height per px) that reads as a full-strength crest.
 const float RIPPLE_GAIN = 28.0;
@@ -216,7 +220,8 @@ Cell water(vec2 p, float h, vec2 g) {
   Cell c;
   // Motes drifting with a slow current.
   vec2 mp = floor((p + vec2(7.0, -4.0) * uTime) / uCell);
-  float mote = step(0.96, hash12(mp)) * (0.4 + 0.6 * hash12(mp + 17.0));
+  // On a light palette at night, a quarter of them, so the stars read (D10).
+  float mote = step(mix(0.96, 0.99, uMoteThin), hash12(mp)) * (0.4 + 0.6 * hash12(mp + 17.0));
   // Caustic light on the pond floor, bent a little by the surface. fbm spans
   // only about ±0.3 across a screen, so shimmer stays within ~[0.62, 0.98];
   // the smoothstep's low edge must stay below that range's top.
@@ -274,6 +279,34 @@ Cell water(vec2 p, float h, vec2 g) {
     c.aux = low;
   }
   return c;
+}
+
+// A sparse field of reflected stars on flat water: fixed to the screen (the
+// sky does not drift with the current, unlike the motes), but ripples shift
+// which cell each star lands in, so a passing ring makes them jump.
+void stars(vec2 p, vec2 g, inout Cell c) {
+  if (uStars < 0.02 || c.mat != M_WATER) return;
+  vec2 cell = floor((p + g * REFRACT * 2.0) / uCell);
+  // 1.6 % of cells; the faintest drop out below, leaving about 1.4 %.
+  if (hash12(cell * 0.917 + 41.0) < 0.984) return;
+  float mag = hash12(cell + 7.7);
+  float ph = hash12(cell + 2.3) * TAU;
+  // Twinkle: slow breathing plus a rare sharp scintillation. Calm holds
+  // each star still at about its average, so the field looks the same.
+  float tw = 0.75 + 0.25 * sin(uTime * (0.8 + 1.6 * mag) + ph);
+  tw += 0.5 * pow(max(sin(uTime * 0.37 + ph * 3.0), 0.0), 40.0);
+  tw = mix(tw, 0.8, uCalm);
+  float v = mag * tw * uStars;
+  if (v < 0.15) return;
+  c.mat = M_STAR;
+  c.dens = v;
+  c.aux = hash12(cell + 9.1);
+  c.style = 0.0;
+  // Brighter stars stand out more. The pond dims toward black; roles fade
+  // toward the deep water, so on a light palette a faint star is light grey.
+  float k = 0.35 + 0.6 * min(v, 1.0);
+  vec3 col = mix(uStarCool, uStarWarm, c.aux);
+  c.col = uRoles > 0.5 ? mix(uWaterDim, col, k) : col * k;
 }
 
 // ---------------------------------------------------------------- fish geometry
@@ -631,6 +664,13 @@ int pickGlyph(Cell c, ivec2 cell) {
     return BODY_RAMP[clamp(int(floor(x + 0.5)), 0, BODY_N - 1)];
   }
   if (c.mat == M_EYE) return G_O;
+  if (c.mat == M_STAR) {
+    // Mostly small points; '*' only for the brightest, mostly at a scintillation.
+    if (dens > 0.95) return G_STAR;
+    if (dens > 0.65) return G_PLUS;
+    if (dens > 0.4) return aux < 0.5 ? G_QUOTE : G_BACKTICK;
+    return G_DOT;
+  }
   if (c.mat == M_GLINT) {
     // High light: star bursts. Low light: dashes along its direction.
     if (aux > 0.55) return dens > 0.6 ? lineGlyph(c.dir, dens > 0.85 ? G_EQUALS : G_MINUS, G_PIPE) : G_DOT;
@@ -648,6 +688,7 @@ void main() {
                 rippleAt(p + vec2(0.0, e)) - rippleAt(p - vec2(0.0, e))) / (2.0 * e);
 
   Cell c = water(p, h, g);
+  stars(p, g, c);
 
   float sh = 0.0;
   for (int f = 0; f < MAX_FISH; f++) {

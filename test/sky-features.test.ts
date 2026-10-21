@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ALL_SKY, DEFAULT_SKY, NO_SKY, resolveSky } from '../src/sky-features';
+import { ALL_SKY, DEFAULT_SKY, NO_SKY, resolveSky, starsAt } from '../src/sky-features';
+import { starWeight } from '../src/lighting';
 
 let warn: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
@@ -68,5 +69,23 @@ describe('resolveSky', () => {
   it('returns frozen results', () => {
     expect(Object.isFrozen(resolveSky({ moon: true }))).toBe(true);
     expect(Object.isFrozen(resolveSky(undefined))).toBe(true);
+  });
+});
+
+describe('starsAt', () => {
+  it('draws stars with their weight only while sky.stars is on', () => {
+    for (const p of [0, 0.5, 0.8, 0.95]) {
+      expect(starsAt(p, DEFAULT_SKY, false).stars).toBe(starWeight(p));
+      expect(starsAt(p, { ...DEFAULT_SKY, stars: false }, false).stars).toBe(0);
+      expect(starsAt(p, NO_SKY, false)).toEqual({ stars: 0, moteThin: 0 });
+    }
+  });
+
+  it('thins the motes only on a light palette with stars showing (D10)', () => {
+    expect(starsAt(0.95, DEFAULT_SKY, false).moteThin).toBe(0);
+    expect(starsAt(0.95, DEFAULT_SKY, true).moteThin).toBe(1);
+    expect(starsAt(0.95, { ...DEFAULT_SKY, stars: false }, true).moteThin).toBe(0);
+    expect(starsAt(0.5, DEFAULT_SKY, true).moteThin).toBe(0);
+    expect(starsAt(0.82, ALL_SKY, true).moteThin).toBe(starWeight(0.82));
   });
 });

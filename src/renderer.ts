@@ -13,7 +13,7 @@ import { pondUnit, type Pond } from './pond';
 import { lightingAt, type Lighting } from './lighting';
 import { POND, POND_BG, WHITE, type ResolvedPalette } from './palette';
 import { asciiLook, brightnessOnly, POND_SCENE, rolesScene, type SceneColors } from './look';
-import { DEFAULT_SKY, type SkyFeatures } from './sky-features';
+import { DEFAULT_SKY, starsAt, type SkyFeatures } from './sky-features';
 
 /** World px per ripple simulation texel. */
 const RIPPLE_PX = 5;
@@ -214,6 +214,7 @@ export class Renderer {
     const colors = this.raw ? POND_SCENE : this.sceneColors;
     // Roles keep their hues at every hour; only the brightness follows the time (Q14).
     const sceneLight = roles ? brightnessOnly(light) : light;
+    const stars = starsAt(phase, this.sky, palette.light);
     const gl = this.gl;
     const atlas = this.atlas;
     const scene = this.scene;
@@ -282,7 +283,9 @@ export class Renderer {
       .vec2('uShadow', unit * light.shadow[0], unit * light.shadow[1])
       .float('uShadowAlpha', light.shadowAlpha)
       // Reduced motion: flicker (ogon twinkle, water glints) runs slower still.
-      .float('uCalm', pond.calm ? 1 : 0);
+      .float('uCalm', pond.calm ? 1 : 0)
+      .float('uStars', stars.stars)
+      .float('uMoteThin', stars.moteThin);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // 3. Halo of the bright cells, at cell resolution. Not needed in the raw view.

@@ -122,7 +122,7 @@ pond.setTime({ mode: 'clock' });
 | Feature     | Default | What it does |
 | ----------- | ------- | ------------ |
 | `darkNight` | on      | At night, darker water and background and about half the floor caustics, so the night reads as night rather than a tinted day. Fades in and out through the blue hours; by day nothing changes. Dark palettes only: a light background stays light at night. |
-| `stars`     | on      | Reflected stars at night. (Accepted; not drawn yet.) |
+| `stars`     | on      | Reflected stars at night: a sparse field of small points (`.` `'` `` ` `` `+`, a rare `*`) that twinkle slowly. Fixed to the screen, so they don't drift with the water, but a passing ripple makes them jump. They arrive after dusk and leave before dawn, and never cover a fish. On a light palette they are dark ink, and the motes thin out at night so the stars read. |
 | `fireflies` | on      | Fireflies at dusk, over the fish. (Accepted; not drawn yet.) |
 | `moon`      | off     | The moon's reflection at night. (Accepted; not drawn yet.) |
 | `sun`       | off     | The sun's reflection as glitter by day. (Accepted; not drawn yet.) |
@@ -153,7 +153,7 @@ the pond:
   looks; fish of the same brightness come out the same colour.
 - **`roles`**: named colour slots. Each glyph takes the colour of what it
   draws: `background`, `water` (deep water and ripples are derived from it),
-  `highlight` (glints, crests, eyes) and, under `fish`, `pale` (white
+  `highlight` (glints, crests, eyes, stars) and, under `fish`, `pale` (white
   scales), `ink` (black patches), `accent` (red markings) and `metallic`
   (Ogon gold). The most control.
 - **`filter`**: today's pond with a filter on top: `background`, `tint`
@@ -340,8 +340,8 @@ logged to the console. Show your own fallback from `onError` if you want one.
 - While a pond is paused (by `pause()` or because it is off-screen), it draws
   nothing: a `setTime`, `setPalette`, `setIntensity`, `setSky` or a resize of the
   container shows when it resumes.
-- With `prefers-reduced-motion: reduce`, the fish swim slower and the water
-  flickers less.
+- With `prefers-reduced-motion: reduce`, the fish swim slower, the water
+  flickers less and the stars hold still.
 - On software WebGL (SwiftShader, llvmpipe and the like) the pond renders at
   a lower resolution to stay smooth.
 

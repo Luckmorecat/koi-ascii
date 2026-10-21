@@ -215,6 +215,18 @@ export function nightWeight(phase: number): number {
   return 1 - smooth(NIGHT_DAWN[0], NIGHT_DAWN[1], p) * (1 - smooth(NIGHT_DUSK[0], NIGHT_DUSK[1], p));
 }
 
+/** Night weight below which no star shows: they arrive after the night and leave before it. */
+const STARS_FROM = 0.35;
+
+/**
+ * How strongly the reflected stars show at a phase (the `stars` sky
+ * feature): `smoothstep(0.35, 1, nightWeight)`, so 0 through the golden
+ * hours and the start of each blue hour, 1 at full night.
+ */
+export function starWeight(phase: number): number {
+  return smooth(STARS_FROM, 1, nightWeight(phase));
+}
+
 /** What the sky features change in the lighting itself. */
 export interface LightingOptions {
   /** The darker night: on only for a pond with `darkNight` on and a dark background (D5). */

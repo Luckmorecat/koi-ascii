@@ -35,6 +35,10 @@ export interface SceneColors {
   uGlintCol: RGB;
   /** Multiplies light added on top of a fish (specular, rim, caustics). */
   uAddTint: RGB;
+  /** Reflected stars (light): the coolest; each star mixes toward uStarWarm. */
+  uStarCool: RGB;
+  /** The warmest reflected star. */
+  uStarWarm: RGB;
 }
 
 const OGON_GOLD = POND_METALLIC;
@@ -62,6 +66,8 @@ const pondScene: SceneColors = {
   uGoldDust: [1.0, 0.85, 0.45],
   uGlintCol: WHITE,
   uAddTint: WHITE,
+  uStarCool: [0.72, 0.8, 1.0],
+  uStarWarm: [1.0, 0.92, 0.78],
 };
 export const POND_SCENE: Readonly<SceneColors> = Object.freeze(pondScene);
 
@@ -98,6 +104,9 @@ export function rolesScene(r: ResolvedRoles): SceneColors {
     uGoldDust: mix(r.metallic, r.highlight, 0.15),
     uGlintCol: r.highlight,
     uAddTint: r.highlight,
+    // Stars are light: the highlight, some a little toward the water (D11).
+    uStarCool: r.highlight,
+    uStarWarm: mix(r.highlight, r.water, 0.25),
   };
 }
 

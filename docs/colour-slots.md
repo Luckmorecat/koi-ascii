@@ -17,7 +17,7 @@ Every colour the pond draws comes from a palette **slot**. A user's palette sets
 
 Classify every new colour as one of two kinds before choosing its slot.
 
-- **Light** is the sun or moon reflected: water glints, crests, eyes, and later a moon disc or stars. It derives from `highlight`. In filter mode (and so `pond`) it also takes the light's hue (`lightHue()` in `scene.frag`); in roles it keeps the palette's hue and only its brightness follows the time of day.
+- **Light** is the sun or moon reflected: water glints, crests, eyes, and later a moon disc. It derives from `highlight`. In filter mode (and so `pond`) it also takes the light's hue (`lightHue()` in `scene.frag`); in roles it keeps the palette's hue and only its brightness follows the time of day. Stars are light from elsewhere: they derive from `highlight` in roles but keep their own pond hues (`uStarCool`, `uStarWarm`) instead of the light's.
 - **Pigment** is an object's own colour: scales, markings, plants, pebbles. It derives from `pale`, `ink`, `accent` or `metallic`, or from a new slot.
 
 `highlight` is the colour with the most contrast against the background, so on a light palette (`paper`) it is near-black. Light objects flip to dark ink there: decide whether that reads right for the new object.
