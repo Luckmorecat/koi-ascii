@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { gpuLaunchOptions } from './test/browser/gpu';
 
 // The repo has no @types/node; this is all the config needs of it.
 declare const process: { env: Record<string, string | undefined> };
@@ -9,6 +10,7 @@ const port = Number(process.env.KOI_TEST_PORT) || 4179;
 // package, starts Vite and stops it again; nothing needs killing by hand.
 export default defineConfig({
   testDir: 'test/browser',
+  globalSetup: './test/browser/gpu-setup.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -22,8 +24,8 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
-        // Software WebGL2, so the suite runs on machines and CI runners without a GPU.
-        launchOptions: { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] },
+        // GPU only; gpu-setup.ts aborts the run if Chromium falls back to the CPU.
+        launchOptions: gpuLaunchOptions,
       },
     },
   ],

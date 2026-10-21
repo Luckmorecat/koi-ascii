@@ -1,17 +1,35 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { mount, open, running } from './helpers';
 
 test.beforeEach(({ page }) => open(page));
 
-test('runs on software WebGL2 (SwiftShader)', async ({ page }) => {
-  const i = await mount(page, { left: 0, top: 0, width: 400, height: 300 });
-  await running(page, i);
-  const stats = await page.evaluate((i) => {
+function rendererStats(page: Page, i: number) {
+  return page.evaluate((i) => {
     const { gpu, software } = window.koiTest.ponds[i].core!.stats;
     return { gpu, software };
   }, i);
-  expect(stats.gpu).toMatch(/SwiftShader/i);
-  expect(stats.software).toBe(true);
+}
+
+test('runs on the hardware GPU', async ({ page }) => {
+  const i = await mount(page, { left: 0, top: 0, width: 400, height: 300 });
+  await running(page, i);
+  const stats = await rendererStats(page, i);
+  expect(stats.gpu).not.toMatch(/SwiftShader|llvmpipe|softpipe|Software/i);
+  expect(stats.software).toBe(false);
+});
+
+// The software path still renders on the GPU: only the reported renderer is spoofed.
+test('takes the software path when the renderer reports SwiftShader', async ({ page }) => {
+  await page.addInitScript(() => {
+    const get = WebGL2RenderingContext.prototype.getParameter;
+    WebGL2RenderingContext.prototype.getParameter = function (this: WebGL2RenderingContext, p: GLenum) {
+      return p === 0x9246 ? 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device), SwiftShader driver)' : get.call(this, p);
+    };
+  });
+  await open(page);
+  const i = await mount(page, { left: 0, top: 0, width: 400, height: 300 });
+  await running(page, i);
+  expect((await rendererStats(page, i)).software).toBe(true);
 });
 
 test('appends one canvas that fills the container', async ({ page }) => {
