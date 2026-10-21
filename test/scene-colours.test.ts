@@ -13,14 +13,24 @@ const ALLOWED = new Set([
   'vec3(0.75)', // eyes never darker than this share of the light
 ]);
 
+// The time-of-day lighting (lighting.ts); every other vec3 uniform is a colour.
+const LIGHTING = ['uLightDir', 'uLightCol', 'uAmbient', 'uWaterTint', 'uSky'];
+
+// Any GLSL float or int literal: 1, 1.0, .5, 1., 1e0, +1.0, -2.5e-3.
+const NUM = String.raw`[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?`;
+const LITERAL = new RegExp(String.raw`vec3\(\s*${NUM}(?:\s*,\s*${NUM})*\s*\)`, 'g');
+
 describe('scene.frag colours', () => {
   it('has no colour literals: every number-only vec3 is maths or light', () => {
-    const literals = scene.match(/vec3\(\s*-?[\d.]+(?:\s*,\s*-?[\d.]+)*\s*\)/g) ?? [];
+    const literals = scene.match(LITERAL) ?? [];
     expect(literals.filter((l) => !ALLOWED.has(l))).toEqual([]);
   });
 
-  it('declares every colour uniform look.ts uploads', () => {
-    const declared = [...scene.matchAll(/^uniform vec3 (u\w+);/gm)].map((m) => m[1]);
-    for (const name of Object.keys(POND_SCENE)) expect(declared).toContain(name);
+  it('declares exactly the colour uniforms look.ts uploads', () => {
+    // Both ways: a colour look.ts doesn't upload stays black on every palette.
+    const colours = [...scene.matchAll(/^\s*uniform\s+vec3\s+(\w+)\s*;/gm)]
+      .map((m) => m[1])
+      .filter((name) => !LIGHTING.includes(name));
+    expect(colours.sort()).toEqual(Object.keys(POND_SCENE).sort());
   });
 });
