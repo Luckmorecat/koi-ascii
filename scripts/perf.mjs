@@ -12,8 +12,8 @@
 //   query     demo URL query, one table per query, e.g. '?debug&time=fixed&phase=0.83'
 //             (default '?debug'; debug is added if missing)
 //   --base    also measure this revision (a branch, tag or sha) and print the delta.
-//             It is checked out as a detached worktree in .claude/worktrees/perf-base-<sha>
-//             (node_modules hard-linked: a symlink makes Vite answer 403), served by
+//             It is checked out as a detached worktree in .claude/worktrees/base-<sha>-<pid>
+//             (scripts/lib/base-worktree.mjs; node_modules hard-linked), served by
 //             its own Vite server and removed afterwards, also on error or Ctrl-C.
 //             Base and head runs alternate in one browser. The base needs koi.profile;
 //             an older one fails with a message. Head is the working tree, uncommitted
@@ -22,10 +22,9 @@
 //             and their spread (max − min)
 //   --frames  timed redraws per run (koi.profile's frames)
 import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { launchGpu, startDemo } from './demo.mjs';
+import { withBaseWorktree } from './lib/base-worktree.mjs';
 
 const { values: opt, positionals } = parseArgs({
   allowPositionals: true,
@@ -49,42 +48,6 @@ const queries = (positionals.length ? positionals : ['?debug']).map((q) => {
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
 const top = git('rev-parse', '--show-toplevel');
 
-/** The base checkout; removed by cleanup(), which also runs on Ctrl-C. */
-let worktree = null;
-function cleanup() {
-  if (!worktree) return;
-  const dir = worktree;
-  worktree = null;
-  try {
-    execFileSync('git', ['worktree', 'remove', '--force', dir], { stdio: 'ignore' });
-  } catch {
-    fs.rmSync(dir, { recursive: true, force: true });
-    execFileSync('git', ['worktree', 'prune'], { stdio: 'ignore' });
-  }
-}
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.once(signal, () => {
-    cleanup();
-    process.exit(130);
-  });
-}
-
-function addWorktree(rev) {
-  const sha = git('rev-parse', '--verify', '--quiet', `${rev}^{commit}`);
-  const dir = path.join(top, '.claude', 'worktrees', `perf-base-${sha.slice(0, 9)}`);
-  // Left over from a run that was killed outright.
-  if (fs.existsSync(dir)) {
-    worktree = dir;
-    cleanup();
-  }
-  execFileSync('git', ['worktree', 'add', '--detach', dir, sha], { stdio: 'ignore' });
-  worktree = dir;
-  execFileSync('cp', ['-al', path.join(top, 'node_modules'), path.join(dir, 'node_modules')]);
-  // Vite's dep cache is written in place; the base gets its own.
-  fs.rmSync(path.join(dir, 'node_modules', '.vite'), { recursive: true, force: true });
-  return { sha, dir };
-}
-
 const median = (a) => {
   const s = [...a].sort((x, y) => x - y);
   return s.length % 2 ? s[s.length >> 1] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
@@ -101,96 +64,98 @@ const report = {
   queries: [],
   errors: [],
 };
-const demos = {};
-let browser;
 try {
   if (opt.base) {
-    let base;
-    try {
-      base = addWorktree(opt.base);
-    } catch {
-      throw new Error(`can't check out --base ${opt.base}: not a revision of this repo?`);
-    }
-    report.base = { rev: opt.base, sha: base.sha };
-    demos.base = await startDemo(base.dir);
-  }
-  demos.head = await startDemo(top);
-  ({ browser, renderer: report.renderer } = await launchGpu());
-  const sides = Object.keys(demos).sort(); // base, head
-
-  /** One page load: the reproducible setup, then koi.profile. */
-  async function measure(side, url) {
-    const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: dpr });
-    page.on('console', (m) => m.type() === 'error' && report.errors.push(`${side}: ${m.text()}`));
-    page.on('pageerror', (e) => report.errors.push(`${side}: ${e.message}`));
-    try {
-      await page.goto(url);
-      await page.waitForFunction(() => !!window.koi, null, { timeout: 15_000 });
-      await page.evaluate(() => window.koi.ready);
-      if (!(await page.evaluate(() => typeof window.koi.profile === 'function'))) {
-        throw new Error(`${side} has no koi.profile (${side === 'base' ? `${opt.base} predates it; pick a newer --base` : 'stale page?'})`);
-      }
-      const r = await page.evaluate(
-        async ({ width, height, dpr, frames }) => {
-          await koi.setViewport({ width, height, dpr });
-          await koi.reseed({ seed: 42 });
-          await koi.step({ frames: 120 });
-          return koi.profile({ frames });
-        },
-        { width, height, dpr, frames },
-      );
-      if (!r.gpuTimer) throw new Error('no EXT_disjoint_timer_query_webgl2 on this GPU: nothing to time');
-      return r;
-    } finally {
-      await page.close();
-    }
-  }
-
-  for (const query of queries) {
-    const q = { query, urls: {}, cells: null, canvas: null, disjointRuns: 0, cpuMs: {}, passes: {} };
-    report.queries.push(q);
-    const results = Object.fromEntries(sides.map((s) => [s, []]));
-    for (const side of sides) q.urls[side] = demos[side].url(query);
-    for (let i = 0; i < runs; i++) {
-      // Alternate which side goes first, so a clock ramping up favours neither.
-      for (const side of i % 2 ? [...sides].reverse() : sides) {
-        if (process.stderr.isTTY) process.stderr.write(`\r\x1b[K${query}  run ${i + 1}/${runs} ${side}`);
-        const r = await measure(side, q.urls[side]);
-        results[side].push(r);
-        q.cells = r.cells;
-        q.canvas = { width: r.width, height: r.height };
-        if (r.disjoint) q.disjointRuns++;
-      }
-    }
-    if (process.stderr.isTTY) process.stderr.write('\r\x1b[K');
-
-    const names = [...new Set(sides.flatMap((s) => results[s].flatMap((r) => Object.keys(r.passes))))];
-    // Frame (all passes) last; the rest in draw order as first seen.
-    names.sort((a, b) => (a === 'frame') - (b === 'frame'));
-    for (const name of names) {
-      const entry = {};
-      for (const side of sides) {
-        const medians = results[side].map((r) => r.passes[name]?.median ?? 0);
-        entry[side] = { median: r2(median(medians)), spread: r2(Math.max(...medians) - Math.min(...medians)), runs: medians };
-      }
-      if (entry.base) {
-        entry.deltaUs = r2(entry.head.median - entry.base.median);
-        entry.deltaPct = entry.base.median ? r2((entry.deltaUs / entry.base.median) * 100) : null;
-      }
-      q.passes[name] = entry;
-    }
-    for (const side of sides) q.cpuMs[side] = +median(results[side].map((r) => r.cpuMs)).toFixed(4);
-    process.stderr.write(table(q) + '\n');
-  }
+    await withBaseWorktree(opt.base, (dir, { sha }) => {
+      report.base = { rev: opt.base, sha };
+      return measureAll(dir);
+    });
+  } else await measureAll(null);
 } catch (e) {
   report.errors.push(`perf: ${e.message}`);
-} finally {
-  await browser?.close();
-  for (const d of Object.values(demos)) await d.close();
-  cleanup();
 }
 console.log(JSON.stringify(report, null, 2));
 process.exitCode = report.errors.length ? 1 : 0;
+
+/** Profiles every query on head, and on the base checkout at `baseDir` if given. */
+async function measureAll(baseDir) {
+  const demos = {};
+  let browser;
+  try {
+    if (baseDir) demos.base = await startDemo(baseDir);
+    demos.head = await startDemo(top);
+    ({ browser, renderer: report.renderer } = await launchGpu());
+    const sides = Object.keys(demos).sort(); // base, head
+
+    /** One page load: the reproducible setup, then koi.profile. */
+    async function measure(side, url) {
+      const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: dpr });
+      page.on('console', (m) => m.type() === 'error' && report.errors.push(`${side}: ${m.text()}`));
+      page.on('pageerror', (e) => report.errors.push(`${side}: ${e.message}`));
+      try {
+        await page.goto(url);
+        await page.waitForFunction(() => !!window.koi, null, { timeout: 15_000 });
+        await page.evaluate(() => window.koi.ready);
+        if (!(await page.evaluate(() => typeof window.koi.profile === 'function'))) {
+          throw new Error(`${side} has no koi.profile (${side === 'base' ? `${opt.base} predates it; pick a newer --base` : 'stale page?'})`);
+        }
+        const r = await page.evaluate(
+          async ({ width, height, dpr, frames }) => {
+            await koi.setViewport({ width, height, dpr });
+            await koi.reseed({ seed: 42 });
+            await koi.step({ frames: 120 });
+            return koi.profile({ frames });
+          },
+          { width, height, dpr, frames },
+        );
+        if (!r.gpuTimer) throw new Error('no EXT_disjoint_timer_query_webgl2 on this GPU: nothing to time');
+        return r;
+      } finally {
+        await page.close();
+      }
+    }
+
+    for (const query of queries) {
+      const q = { query, urls: {}, cells: null, canvas: null, disjointRuns: 0, cpuMs: {}, passes: {} };
+      report.queries.push(q);
+      const results = Object.fromEntries(sides.map((s) => [s, []]));
+      for (const side of sides) q.urls[side] = demos[side].url(query);
+      for (let i = 0; i < runs; i++) {
+        // Alternate which side goes first, so a clock ramping up favours neither.
+        for (const side of i % 2 ? [...sides].reverse() : sides) {
+          if (process.stderr.isTTY) process.stderr.write(`\r\x1b[K${query}  run ${i + 1}/${runs} ${side}`);
+          const r = await measure(side, q.urls[side]);
+          results[side].push(r);
+          q.cells = r.cells;
+          q.canvas = { width: r.width, height: r.height };
+          if (r.disjoint) q.disjointRuns++;
+        }
+      }
+      if (process.stderr.isTTY) process.stderr.write('\r\x1b[K');
+
+      const names = [...new Set(sides.flatMap((s) => results[s].flatMap((r) => Object.keys(r.passes))))];
+      // Frame (all passes) last; the rest in draw order as first seen.
+      names.sort((a, b) => (a === 'frame') - (b === 'frame'));
+      for (const name of names) {
+        const entry = {};
+        for (const side of sides) {
+          const medians = results[side].map((r) => r.passes[name]?.median ?? 0);
+          entry[side] = { median: r2(median(medians)), spread: r2(Math.max(...medians) - Math.min(...medians)), runs: medians };
+        }
+        if (entry.base) {
+          entry.deltaUs = r2(entry.head.median - entry.base.median);
+          entry.deltaPct = entry.base.median ? r2((entry.deltaUs / entry.base.median) * 100) : null;
+        }
+        q.passes[name] = entry;
+      }
+      for (const side of sides) q.cpuMs[side] = +median(results[side].map((r) => r.cpuMs)).toFixed(4);
+      process.stderr.write(table(q) + '\n');
+    }
+  } finally {
+    await browser?.close();
+    for (const d of Object.values(demos)) await d.close();
+  }
+}
 
 function table(q) {
   const base = !!report.base;
