@@ -31,7 +31,7 @@ export interface SceneColors {
   uSilk: RGB;
   uBubble: RGB;
   uGoldDust: RGB;
-  /** Water glints and the sun's glitter. Pond: unused (the light's own hue); roles: the highlight. */
+  /** Water glints. Pond: unused (the light's own hue); roles: the highlight. */
   uGlintCol: RGB;
   /** Multiplies light added on top of a fish (specular, rim, caustics). */
   uAddTint: RGB;
@@ -41,6 +41,8 @@ export interface SceneColors {
   uStarWarm: RGB;
   /** The moon's reflection (light), at full strength; it dims with its alpha. */
   uMoonCol: RGB;
+  /** The sun's glitter (light), at full strength. Pond: gold, tinted by the light's hue; roles: the highlight. */
+  uSunCol: RGB;
   /** Fireflies (pigment: their own glow, not reflected light), at full brightness. Drawn by fly.frag, not scene.frag. */
   uFlyCol: RGB;
 }
@@ -73,6 +75,7 @@ const pondScene: SceneColors = {
   uStarCool: [0.72, 0.8, 1.0],
   uStarWarm: [1.0, 0.92, 0.78],
   uMoonCol: [0.86, 0.9, 0.98],
+  uSunCol: [1.0, 0.84, 0.52],
   uFlyCol: [0.86, 1.0, 0.42],
 };
 export const POND_SCENE: Readonly<SceneColors> = Object.freeze(pondScene);
@@ -115,6 +118,8 @@ export function rolesScene(r: ResolvedRoles): SceneColors {
     uStarWarm: mix(r.highlight, r.water, 0.25),
     // The moon is light too: the highlight, a quarter toward pale (D11).
     uMoonCol: mix(r.highlight, r.pale, 0.25),
+    // The sun's glitter is light: the highlight, like the glints (D11).
+    uSunCol: r.highlight,
     // Fireflies: the metallic, about a third toward the highlight (D11).
     uFlyCol: mix(r.metallic, r.highlight, 0.32),
   };

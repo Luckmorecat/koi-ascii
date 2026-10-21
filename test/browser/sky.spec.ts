@@ -639,7 +639,7 @@ test('at noon with sky.sun a patch of . + * glitter flashes, clear of the centre
   expect(new Set(counts).size).toBeGreaterThan(3);
   // Brightness: the scene colour of the brightest glitter cell against the Ogon's brightest cell (D8).
   expect(ogon).toBeGreaterThan(150);
-  expect(sun).toBeGreaterThan(80);
+  expect(sun).toBeGreaterThan(150);
   expect(sun).toBeLessThanOrEqual(ogon);
 });
 
@@ -661,7 +661,7 @@ test('the sun is off by default, shows with sky true, and only by day', async ({
   }
 });
 
-test('the glitter is warm at 0.35 and 0.74 and white at noon on the pond', async ({ page }) => {
+test('the glitter is gold at noon and deeper at 0.35 and 0.74 on the pond', async ({ page }) => {
   await page.setViewportSize({ width: BIG.width, height: BIG.height });
   const blueOverRed: Record<number, number> = {};
   for (const phase of [0.35, 0.5, 0.74]) {
@@ -677,9 +677,10 @@ test('the glitter is warm at 0.35 and 0.74 and white at noon on the pond', async
     blueOverRed[phase] = b / r;
     await page.evaluate((i) => window.koiTest.ponds[i].handle.destroy(), i);
   }
-  expect(blueOverRed[0.5]).toBeGreaterThan(0.93);
-  expect(blueOverRed[0.35]).toBeLessThan(0.9);
-  expect(blueOverRed[0.74]).toBeLessThan(0.8);
+  expect(blueOverRed[0.5]).toBeGreaterThan(0.4);
+  expect(blueOverRed[0.5]).toBeLessThan(0.65);
+  expect(blueOverRed[0.35]).toBeLessThan(blueOverRed[0.5]);
+  expect(blueOverRed[0.74]).toBeLessThan(blueOverRed[0.5]);
 });
 
 test('the sun never draws over a fish', async ({ page }) => {
