@@ -1,7 +1,7 @@
 import vertexSrc from './shaders/fullscreen.vert?raw';
 import commonSrc from './shaders/common.glsl?raw';
 import rippleSrc from './shaders/ripple.frag?raw';
-import sceneSrc from './shaders/scene.frag?raw';
+import { sceneSrc } from './shaders/scene';
 import asciiSrc from './shaders/ascii.frag?raw';
 import glowSrc from './shaders/glow.frag?raw';
 import flyVertSrc from './shaders/fly.vert?raw';

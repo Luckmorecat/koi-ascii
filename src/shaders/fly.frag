@@ -9,7 +9,7 @@ uniform float uRoles;
 
 in float vBright;
 
-layout(location = 0) out vec4 oColor; // as scene.frag: rgb colour, a density
+layout(location = 0) out vec4 oColor; // as scene/main.frag: rgb colour, a density
 layout(location = 1) out vec4 oInfo;  // r glyph index, g cell class
 
 void main() {

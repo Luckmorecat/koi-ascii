@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { POND_SCENE, rolesScene } from '../src/look';
 import type { ResolvedRoles } from '../src/palette';
-import scene from '../src/shaders/scene.frag?raw';
+import { sceneChunks } from '../src/shaders/scene';
 import fly from '../src/shaders/fly.frag?raw';
 
-// scene.frag, and fly.frag for the fireflies, draw only with colours fed from
-// look.ts, so every palette reaches every object (docs/colour-slots.md).
-const SHADERS = { 'scene.frag': scene, 'fly.frag': fly };
+// The scene pass's chunks, and fly.frag for the fireflies, draw only with colours
+// fed from look.ts, so every palette reaches every object (docs/colour-slots.md).
+const SHADERS: Record<string, string> = { ...Object.fromEntries(sceneChunks), 'fly.frag': fly };
 
 // Number-only vec3s that are maths or light, not an object's colour.
 const ALLOWED = new Set([
@@ -127,8 +127,9 @@ describe('sun colour (D11)', () => {
       metallic: [0.6, 0.5, 0.2],
     };
     expect(rolesScene(r).uSunCol).toEqual(r.highlight);
-    // scene.frag's sun() tints uSunCol by the light's hue in the pond only.
-    const sun = scene.slice(scene.indexOf('void sun('), scene.indexOf('// ----', scene.indexOf('void sun(')));
+    // sky.glsl's sun() tints uSunCol by the light's hue in the pond only.
+    const sky = SHADERS['sky.glsl'];
+    const sun = sky.slice(sky.indexOf('void sun('));
     expect(sun).toContain('uSunCol * mirrorHue()');
   });
 });
