@@ -6,10 +6,29 @@ import path from 'node:path';
 
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
 
+/** `cp -al` in Node, so it works on Windows too: hard links, copies where linking fails. */
+function linkTree(from, to, skip) {
+  fs.mkdirSync(to, { recursive: true });
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    if (skip?.includes(entry.name)) continue;
+    const src = path.join(from, entry.name);
+    const dst = path.join(to, entry.name);
+    if (entry.isDirectory()) linkTree(src, dst);
+    else if (entry.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(src), dst);
+    else {
+      try {
+        fs.linkSync(src, dst);
+      } catch {
+        fs.copyFileSync(src, dst);
+      }
+    }
+  }
+}
+
 /**
  * Checks `rev` out as a detached worktree in .claude/worktrees/base-<sha>-<pid>,
  * runs `fn(dir)` and removes the worktree again, also on error and Ctrl-C.
- * node_modules is hard-linked from this checkout: a symlink outside the
+ * node_modules is hard-linked from this checkout (linkTree): a symlink outside the
  * worktree makes Vite answer 403. Resolves to what `fn` resolves to.
  */
 export async function withBaseWorktree(rev, fn) {
@@ -42,9 +61,8 @@ export async function withBaseWorktree(rev, fn) {
   process.once('exit', remove);
   try {
     execFileSync('git', ['worktree', 'add', '--detach', dir, sha], { stdio: 'ignore' });
-    execFileSync('cp', ['-al', path.join(top, 'node_modules'), path.join(dir, 'node_modules')]);
     // Vite's dep cache is written in place; the base gets its own.
-    fs.rmSync(path.join(dir, 'node_modules', '.vite'), { recursive: true, force: true });
+    linkTree(path.join(top, 'node_modules'), path.join(dir, 'node_modules'), ['.vite']);
     return await fn(dir);
   } finally {
     process.off('SIGINT', onSignal);
