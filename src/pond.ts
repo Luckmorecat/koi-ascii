@@ -1,3 +1,4 @@
+import { Fireflies } from './fireflies';
 import { Koi, type Pointer, type Tap, type World } from './koi/koi';
 import {
   FISH_TEXELS,
@@ -66,6 +67,8 @@ export class Pond implements World {
   readonly data = new Float32Array(MAX_FISH * FISH_TEXELS * 4);
   /** Fish rows in draw order, deepest first. */
   readonly order = new Int32Array(MAX_FISH);
+  /** Seeded from the pond's seed; simulated whether or not they show (the sky decides that). */
+  readonly fireflies: Fireflies;
 
   private orderN = 0;
   private acc = 0;
@@ -77,6 +80,7 @@ export class Pond implements World {
     this.width = width;
     this.height = height;
     this.unit = pondUnit(width, height);
+    this.fireflies = new Fireflies(seed);
     const rng = new Rng(seed);
     for (const v of VARIETIES.slice(0, MAX_FISH)) {
       this.fish.push(new Koi(v, Math.floor(rng.next() * 2 ** 32), this));
@@ -165,9 +169,15 @@ export class Pond implements World {
     while (this.acc >= SIM_DT) {
       this.time += SIM_DT;
       for (const f of this.fish) f.update(SIM_DT, this);
+      this.fireflies.step(SIM_DT, this.calm);
       this.acc -= SIM_DT;
     }
     this.pointer.speed *= Math.exp(-dt * 6);
+  }
+
+  /** Packs the fireflies for this pond's size (see fireflies.ts for the layout); what the renderer uploads, and the browser specs' seam. */
+  packFireflies(): Float32Array {
+    return this.fireflies.pack(this.width, this.height);
   }
 
   /** Packs fish state into `data`/`order`; returns the fish count. */

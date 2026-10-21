@@ -7,7 +7,7 @@ import { mix, POND_ACCENT, POND_BG, POND_METALLIC, WHITE, type ResolvedPalette, 
 
 type Vec3 = [number, number, number];
 
-/** Every colour the scene pass draws with (scene.frag uniforms of the same names). */
+/** Every colour the scene pass draws with: uniforms of the same names in scene.frag, and fly.frag for the fireflies. */
 export interface SceneColors {
   uWaterDim: RGB;
   uWaterLit: RGB;
@@ -31,10 +31,18 @@ export interface SceneColors {
   uSilk: RGB;
   uBubble: RGB;
   uGoldDust: RGB;
-  /** Water glints. Pond: unused (the light's own hue); roles: the highlight. */
+  /** Water glints and the sun's glitter. Pond: unused (the light's own hue); roles: the highlight. */
   uGlintCol: RGB;
   /** Multiplies light added on top of a fish (specular, rim, caustics). */
   uAddTint: RGB;
+  /** Reflected stars (light): the coolest; each star mixes toward uStarWarm. */
+  uStarCool: RGB;
+  /** The warmest reflected star. */
+  uStarWarm: RGB;
+  /** The moon's reflection (light), at full strength; it dims with its alpha. */
+  uMoonCol: RGB;
+  /** Fireflies (pigment: their own glow, not reflected light), at full brightness. Drawn by fly.frag, not scene.frag. */
+  uFlyCol: RGB;
 }
 
 const OGON_GOLD = POND_METALLIC;
@@ -62,6 +70,10 @@ const pondScene: SceneColors = {
   uGoldDust: [1.0, 0.85, 0.45],
   uGlintCol: WHITE,
   uAddTint: WHITE,
+  uStarCool: [0.72, 0.8, 1.0],
+  uStarWarm: [1.0, 0.92, 0.78],
+  uMoonCol: [0.86, 0.9, 0.98],
+  uFlyCol: [0.86, 1.0, 0.42],
 };
 export const POND_SCENE: Readonly<SceneColors> = Object.freeze(pondScene);
 
@@ -98,6 +110,13 @@ export function rolesScene(r: ResolvedRoles): SceneColors {
     uGoldDust: mix(r.metallic, r.highlight, 0.15),
     uGlintCol: r.highlight,
     uAddTint: r.highlight,
+    // Stars are light: the highlight, some a little toward the water (D11).
+    uStarCool: r.highlight,
+    uStarWarm: mix(r.highlight, r.water, 0.25),
+    // The moon is light too: the highlight, a quarter toward pale (D11).
+    uMoonCol: mix(r.highlight, r.pale, 0.25),
+    // Fireflies: the metallic, about a third toward the highlight (D11).
+    uFlyCol: mix(r.metallic, r.highlight, 0.32),
   };
 }
 
@@ -131,9 +150,14 @@ export const LOOK_FILTER = 2;
 /** Share of the sky's reflection (warm at dawn and dusk) laid over the background. */
 const BG_SKY = 0.15;
 
-/** A dark background graded by the time of day, the way the pond's own is. */
+/**
+ * A dark background graded by the time of day, the way the pond's own is,
+ * and darker at night with the `darkNight` sky feature.
+ */
 export function graded(bg: RGB, light: Lighting): RGB {
-  return [0, 1, 2].map((i) => bg[i] * light.water[i] + light.sky[i] * BG_SKY) as Vec3;
+  const c = [0, 1, 2].map((i) => bg[i] * light.water[i] + light.sky[i] * BG_SKY) as Vec3;
+  // Skipped at 1, so a pond without the darker night keeps 0.2's exact values (D4).
+  return light.darkWater === 1 ? c : (c.map((v) => v * light.darkWater) as Vec3);
 }
 
 export interface AsciiLook {

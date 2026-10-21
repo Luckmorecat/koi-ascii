@@ -4,6 +4,8 @@ import rippleSrc from './shaders/ripple.frag?raw';
 import sceneSrc from './shaders/scene.frag?raw';
 import asciiSrc from './shaders/ascii.frag?raw';
 import glowSrc from './shaders/glow.frag?raw';
+import flyVertSrc from './shaders/fly.vert?raw';
+import flyFragSrc from './shaders/fly.frag?raw';
 import { Program } from './gl/program';
 import { createTarget, createTexture, deleteTarget, type Target, type TexFormat } from './gl/target';
 import { buildAtlas, glyphDefines, type Atlas } from './glyphs';
@@ -13,6 +15,8 @@ import { pondUnit, type Pond } from './pond';
 import { lightingAt, type Lighting } from './lighting';
 import { POND, POND_BG, WHITE, type ResolvedPalette } from './palette';
 import { asciiLook, brightnessOnly, POND_SCENE, rolesScene, type SceneColors } from './look';
+import { DEFAULT_SKY, firefliesAt, starsAt, type SkyFeatures } from './sky-features';
+import { FIREFLY_COUNT, FIREFLY_FLOATS } from './fireflies';
 
 /** World px per ripple simulation texel. */
 const RIPPLE_PX = 5;
@@ -26,11 +30,14 @@ const FONT_MAX = 22;
 const FONT_MIN_DEVICE = 11;
 /** Halo brightness at glowStrength 1; kept low so glyphs never wash into blobs. */
 const GLOW_GAIN = 2.2;
+/** Firefly window weight below which no point is drawn (fly.vert's FLY_MIN then hides each one anyway). */
+const FLIES_MIN = 0.02;
 
 /**
  * Four passes per frame:
  *  1. ripple — wave equation on a coarse grid (ping-pong)
- *  2. scene  — one fragment per character cell → colour and glyph
+ *  2. scene  — one fragment per character cell → colour and glyph; then the
+ *              fireflies as one point each into the same cells, over the fish
  *  3. glow   — one fragment per cell → blurred halo of the bright cells
  *              (skipped on software renderers: no target, no program)
  *  4. ascii  — per screen pixel, copy the cell's glyph from the atlas
@@ -49,6 +56,8 @@ export class Renderer {
   palette: ResolvedPalette = POND;
   /** 0 only the background … 1 the full pond; already clamped to [0, 1]. */
   intensity = 1;
+  /** Night-sky features, already resolved; mount() owns them like the palette. */
+  sky: SkyFeatures = DEFAULT_SKY;
 
   private readonly gl: WebGL2RenderingContext;
   private readonly fontFamily: string;
@@ -59,12 +68,17 @@ export class Renderer {
   private readonly sceneProg: Program;
   private readonly asciiProg: Program;
   private readonly glowProg: Program | null;
+  private readonly flyProg: Program;
+  /** Vertex array and buffer for the fireflies: one vec4 per point (fireflies.ts). */
+  private readonly flyVao: WebGLVertexArrayObject;
+  private readonly flyBuf: WebGLBuffer;
   private readonly fishTex: WebGLTexture;
   private readonly dropBuf = new Float32Array(MAX_DROPS * 4);
   private readonly stopBuf = new Float32Array(5 * 3);
   /** Scene colours for the active palette (roles replace the pond's). */
   private sceneColors: Readonly<SceneColors> = POND_SCENE;
   private uploadedColors: Readonly<SceneColors> | null = null;
+  private flyColors: Readonly<SceneColors> | null = null;
 
   private atlas: Atlas | null = null;
   private ripple: [Target, Target] | null = null;
@@ -105,10 +119,22 @@ export class Renderer {
     this.sceneProg = new Program(gl, vertex, fragment(sceneSrc), 'scene');
     this.glowProg = software ? null : new Program(gl, vertex, fragment(glowSrc), 'glow');
     this.asciiProg = new Program(gl, vertex, fragment((software ? '' : '#define GLOW\n') + asciiSrc), 'ascii');
+    this.flyProg = new Program(gl, `#version 300 es\n${commonSrc}\n${flyVertSrc}`, fragment(flyFragSrc), 'fly');
 
     const vao = gl.createVertexArray();
-    if (!vao) throw new Error('Could not create a vertex array');
+    const flyVao = gl.createVertexArray();
+    const flyBuf = gl.createBuffer();
+    if (!vao || !flyVao || !flyBuf) throw new Error('Could not create a vertex array');
     this.vao = vao;
+    this.flyVao = flyVao;
+    this.flyBuf = flyBuf;
+    gl.bindVertexArray(flyVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, flyBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, FIREFLY_COUNT * FIREFLY_FLOATS * 4, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, FIREFLY_FLOATS, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
     this.fishTex = createTexture(gl, FISH_TEXELS, MAX_FISH, {
       internal: gl.RGBA32F,
       format: gl.RGBA,
@@ -134,6 +160,11 @@ export class Renderer {
     this.sceneColors = palette.mode === 'roles' ? rolesScene(palette.roles) : POND_SCENE;
     this.stopBuf.fill(0);
     if (palette.mode === 'ramp') palette.stops.forEach((c, i) => this.stopBuf.set(c, i * 3));
+  }
+
+  /** Sets the night-sky features; the next render() draws with them. */
+  setSky(sky: SkyFeatures): void {
+    this.sky = sky;
   }
 
   /** Sizes everything for a drawing buffer of devW × devH device pixels. */
@@ -198,13 +229,16 @@ export class Renderer {
   /** `phase` is the time of day in [0, 1), 0 = midnight (see sky.ts). */
   render(pond: Pond, dt: number, phase: number): void {
     this.phase = phase;
-    const light = (this.light = lightingAt(phase));
     // The raw view is a fixed reference: the pond's own colours, no palette (A13).
     const palette = this.raw ? POND : this.palette;
+    // A light background stays light at night: no darker night there (D5).
+    const light = (this.light = lightingAt(phase, { darkNight: this.sky.darkNight && !palette.light }));
     const roles = palette.mode === 'roles';
     const colors = this.raw ? POND_SCENE : this.sceneColors;
     // Roles keep their hues at every hour; only the brightness follows the time (Q14).
     const sceneLight = roles ? brightnessOnly(light) : light;
+    const stars = starsAt(phase, this.sky, palette.light);
+    const flies = firefliesAt(phase, this.sky);
     const gl = this.gl;
     const atlas = this.atlas;
     const scene = this.scene;
@@ -268,11 +302,40 @@ export class Renderer {
       .float('uGlint', light.glint)
       .float('uCaustic', light.caustic)
       .float('uFloor', light.floor)
+      .float('uDarkWater', light.darkWater)
+      .float('uDarkCaustic', light.darkCaustic)
       .vec2('uShadow', unit * light.shadow[0], unit * light.shadow[1])
       .float('uShadowAlpha', light.shadowAlpha)
       // Reduced motion: flicker (ogon twinkle, water glints) runs slower still.
-      .float('uCalm', pond.calm ? 1 : 0);
+      .float('uCalm', pond.calm ? 1 : 0)
+      .float('uStars', stars.stars)
+      .float('uMoteThin', stars.moteThin)
+      .vec2('uView', this.devW / this.dpr, this.devH / this.dpr)
+      .vec4('uMoon', light.moon.pos[0], light.moon.pos[1], light.moon.radius, this.sky.moon ? light.moon.alpha : 0)
+      .vec4('uSun', light.sun.pos[0], light.sun.pos[1], light.sun.radius, this.sky.sun ? light.sun.alpha : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    // Fireflies: one point each, written over the scene's cells (fish too).
+    // Outside their dusk window, or off, nothing is drawn.
+    if (flies >= FLIES_MIN) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.flyBuf);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, pond.packFireflies());
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      gl.bindVertexArray(this.flyVao);
+      const fp = this.flyProg.use();
+      if (colors !== this.flyColors) {
+        // Only the colours fly.frag declares; the rest have no location (a no-op).
+        for (const [name, c] of Object.entries(colors)) fp.vec3(name, c[0], c[1], c[2]);
+        this.flyColors = colors;
+      }
+      fp.float('uRoles', roles ? 1 : 0)
+        .vec2('uCell', atlas.cellW / this.dpr, atlas.cellH / this.dpr)
+        .vec2('uOriginCss', this.originX / this.dpr, this.originY / this.dpr)
+        .ivec2('uGrid', this.cols, this.rows)
+        .float('uFlies', flies);
+      gl.drawArrays(gl.POINTS, 0, FIREFLY_COUNT);
+      gl.bindVertexArray(this.vao);
+    }
 
     // 3. Halo of the bright cells, at cell resolution. Not needed in the raw view.
     const glowProg = this.raw ? null : this.glowProg;

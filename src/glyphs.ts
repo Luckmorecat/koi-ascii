@@ -21,6 +21,8 @@ export const GLYPHS = {
   SLASH: '/',
   BSLASH: '\\',
   PIPE: '|',
+  // Last, so every glyph before it keeps its atlas cell and index.
+  BIG_O: 'O', // the moon's brightest face
 } as const;
 
 const CHARS: readonly string[] = Object.values(GLYPHS);

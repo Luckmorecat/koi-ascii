@@ -5,6 +5,7 @@ import { parseCssColor, resolveIntensity, resolvePalette } from './palette';
 import { MIN_POND_PX, Pond } from './pond';
 import { Renderer } from './renderer';
 import { Sky, timeSource } from './sky';
+import { resolveSky } from './sky-features';
 
 const DEFAULT_FONT_FAMILY = '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace';
 /** Backing-store budget (device px) when WebGL runs on a CPU rasteriser. */
@@ -37,6 +38,7 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
   // the renderer is up.
   let palette = resolvePalette(options.palette, parseCssColor);
   let intensity = resolveIntensity(options.intensity, 1, true);
+  let skyFeatures = resolveSky(options.sky);
 
   // The canvas is the only thing added to the page. Its own background paints
   // the box before the first frame and after a failure, so the container's
@@ -131,6 +133,11 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       intensity = resolveIntensity(next, intensity, false);
       renderer?.setLook(palette, intensity);
     },
+    setSky(next) {
+      if (destroyed) return;
+      skyFeatures = resolveSky(next);
+      renderer?.setSky(skyFeatures);
+    },
     pause() {
       paused = true;
       schedule();
@@ -222,6 +229,7 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       try {
         renderer = new Renderer(ctx, fontFamily, software);
         renderer.setLook(palette, intensity);
+        renderer.setSky(skyFeatures);
         sizeDirty = true;
         return true;
       } catch (err) {

@@ -63,7 +63,7 @@ test('with ?debug: koi.ready resolves and tools() lists every tool with a schema
   await expect(page.locator('#koi-debug')).toBeVisible();
   const tools = await page.evaluate(() => window.koi!.tools());
   const names = tools.map((t) => t.name);
-  for (const n of ['getState', 'setTime', 'reseed', 'step', 'capture', 'setViewport', 'getPerf', 'setRender', 'setPalette', 'setIntensity']) {
+  for (const n of ['getState', 'setTime', 'reseed', 'step', 'capture', 'setViewport', 'getPerf', 'setRender', 'setPalette', 'setIntensity', 'setSky']) {
     expect(names).toContain(n);
   }
   for (const t of tools) {
@@ -136,6 +136,26 @@ test('pinned viewport + reseed + step + capture is reproducible; another seed di
   expect([r.a.width, r.a.height]).toEqual([800, 600]);
   expect(r.same).toBe(true);
   expect(r.otherSeedDiffers).toBe(true);
+});
+
+test('at dusk the fireflies replay with a seed after a reseed, and setSky turns them off', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.83');
+  const r = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.setViewport({ width: 800, height: 600, dpr: 1 });
+    const frame = async (seed: number) => {
+      await k.reseed({ seed });
+      await k.step({ frames: 150 });
+      return ((await k.capture()) as { dataUrl: string }).dataUrl;
+    };
+    const a = await frame(77);
+    const b = await frame(77);
+    await k.setSky({ fireflies: false });
+    const off = await frame(77);
+    return { same: a === b, flyless: a !== off };
+  });
+  expect(r.same).toBe(true);
+  expect(r.flyless).toBe(true);
 });
 
 test('step pauses and advances the frame counter exactly', async ({ page }) => {
@@ -225,4 +245,67 @@ test('setPalette and setIntensity: URL, state, panel controls and a reseed', asy
   expect(r).toMatchObject({ palette: 'mono', intensity: 0.35 });
   expect(new URL(page.url()).searchParams.get('intensity')).toBe('0.35');
   expect(await farthestFrom(page, await capture(), MONO_BG)).toBeGreaterThan(10);
+});
+
+test('setSky: URL, state, panel toggles and a reseed', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.95&sky=none');
+  expect(await page.evaluate(async () => (await (window.koi as unknown as Tools).getState()).sky)).toEqual({
+    stars: false,
+    fireflies: false,
+    darkNight: false,
+    moon: false,
+    sun: false,
+  });
+
+  // The panel has a toggle per feature; the darkNight one drives setSky live.
+  const box = page.locator('#koi-debug label').filter({ hasText: 'darkNight' }).locator('input[type=checkbox]');
+  await expect(box).not.toBeChecked();
+  await box.check();
+  await expect.poll(() => new URL(page.url()).searchParams.get('sky')).toBe('darkNight');
+
+  const sky = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.setSky({ stars: true, fireflies: true });
+    await k.reseed({ seed: 5 });
+    return (await k.getState()).sky;
+  });
+  // Back to the defaults: the URL drops the param, and a reseed keeps the sky.
+  expect(sky).toEqual({ stars: true, fireflies: true, darkNight: true, moon: false, sun: false });
+  expect(new URL(page.url()).searchParams.get('sky')).toBeNull();
+  await expect(box).toBeChecked();
+});
+
+test('setSky and setPalette together survive a context loss and restore', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.95&seed=42');
+  await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.setSky({ moon: true, stars: false });
+    await k.setPalette({ palette: 'paper' });
+    const ext = document.querySelector<HTMLCanvasElement>('#pond canvas')!.getContext('webgl2')!.getExtension('WEBGL_lose_context')!;
+    Object.assign(window, { koiLoseContext: ext });
+    ext.loseContext();
+  });
+  const lost = () => page.evaluate(async () => (await (window.koi as unknown as Tools).getState()).contextLost);
+  await expect.poll(lost).toBe(true);
+  await page.evaluate(() => (window as unknown as { koiLoseContext: WEBGL_lose_context }).koiLoseContext.restoreContext());
+  await expect.poll(lost).toBe(false);
+
+  const state = await page.evaluate(async () => (await (window.koi as unknown as Tools).getState()) as { sky: unknown; render: { palette: string } });
+  expect(state.sky).toEqual({ stars: false, fireflies: true, darkNight: true, moon: true, sun: false });
+  expect(state.render.palette).toBe('paper');
+  const params = new URL(page.url()).searchParams;
+  expect(params.get('sky')).toBe('fireflies,darkNight,moon');
+  expect(params.get('palette')).toBe('paper');
+  await expect(page.locator('#koi-debug label').filter({ hasText: 'moon' }).locator('input[type=checkbox]')).toBeChecked();
+
+  // The restored renderer draws the moon: turning it off changes the frame.
+  const [on, off] = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.step();
+    const on = ((await k.capture()) as { dataUrl: string }).dataUrl;
+    await k.setSky({ moon: false });
+    const off = ((await k.capture()) as { dataUrl: string }).dataUrl;
+    return [on, off];
+  });
+  expect(on).not.toBe(off);
 });

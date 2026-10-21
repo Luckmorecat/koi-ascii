@@ -5,6 +5,7 @@
 // shortcuts and the panel's controls are all generated from it.
 import { koiPalettes, type KoiPond, type KoiPondError, type KoiPondPaletteName, type KoiPondTime } from '../../src/index';
 import { attachHooks, DAY_PARTS, dayPartAt, LoopSource, MAX_CYCLE_S, MIN_CYCLE_S, type PondCore } from '../../src/internal';
+import { SKY_FEATURES, type SkyFeature } from '../../src/sky-features';
 import { MAX_SEED, sceneTime, writeScene, type PondLook, type SceneState } from '../scene';
 import { PerfRecorder } from './perf';
 import { describeProp, validate, type ObjectSchema } from './schema';
@@ -28,7 +29,7 @@ export interface ToolAnnotations {
   /** Each argument applies on its own, so the panel applies controls as they change. */
   live?: boolean;
   /** `getState()[reflects]` holds the current value of each argument, for the panel. */
-  reflects?: 'time' | 'render' | 'scene' | 'viewport';
+  reflects?: 'time' | 'render' | 'sky' | 'scene' | 'viewport';
   /** Key (KeyboardEvent.key, any case) and what pressing it does. */
   shortcut?: { key: string; does: string };
 }
@@ -93,6 +94,8 @@ export interface DebugState {
     palette: SceneState['palette'];
     intensity: number;
   };
+  /** Every sky feature, on or off. */
+  sky: Record<SkyFeature, boolean>;
   scene: { seed: number | null; fish: number };
   viewport: { pinned: boolean; width: number; height: number; dpr: number };
   /** Drawing buffer size in device px. */
@@ -227,7 +230,7 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
     const m: Mount = { handle: null as unknown as KoiPond, core: null, error: null, ready, abandon: reject };
     current = m;
     // The look goes in at mount, so a reseed keeps it.
-    m.handle = mount(seed, sceneTime(scene), { palette: scene.palette, intensity: scene.intensity }, (error) => {
+    m.handle = mount(seed, sceneTime(scene), { palette: scene.palette, intensity: scene.intensity, sky: scene.sky }, (error) => {
       m.error = error;
       reject({ code: 'pond-failed', message: error.message });
       if (m === current) changed(null);
@@ -313,6 +316,7 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
         palette: scene.palette,
         intensity: scene.intensity,
       },
+      sky: { ...scene.sky },
       scene: { seed: c?.stats.seed ?? scene.seed, fish: c?.pond.fish.length ?? 0 },
       viewport: {
         pinned: !!viewport,
@@ -335,7 +339,7 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
   const tools: ToolDef[] = [
     {
       name: 'getState',
-      description: 'The whole current state: readiness, pause and frame counter, time, render, seed, viewport and canvas size.',
+      description: 'The whole current state: readiness, pause and frame counter, time, render, sky, seed, viewport and canvas size.',
       inputSchema: NO_ARGS,
       annotations: { section: 'scene', readOnly: true },
       needs: 'nothing',
@@ -531,6 +535,34 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
         current.handle.setIntensity(scene.intensity);
         writeUrl();
         return state().render;
+      },
+    },
+    {
+      name: 'setSky',
+      description:
+        'Turns night-sky features on or off from the next frame on; the fish carry on. Omitted features keep ' +
+        'their current value. Defaults: stars, fireflies and darkNight (darker water at night on dark ' +
+        'palettes) on, moon and sun off; all off is the 0.2 pond. Saved in the URL.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          stars: { type: 'boolean', description: 'Reflected stars at night.' },
+          fireflies: { type: 'boolean', description: 'Fireflies at dusk.' },
+          darkNight: { type: 'boolean', description: 'Darker water and background at night (dark palettes only).' },
+          moon: { type: 'boolean', description: "The moon's reflection at night." },
+          sun: { type: 'boolean', description: "The sun's glitter by day." },
+        },
+        additionalProperties: false,
+      },
+      annotations: { section: 'render', live: true, reflects: 'sky' },
+      run: (args) => {
+        const next = { ...scene.sky };
+        for (const f of SKY_FEATURES) if (args[f] !== undefined) next[f] = args[f] as boolean;
+        scene.sky = Object.freeze(next);
+        // Through the handle, which keeps it across a lost context.
+        current.handle.setSky(scene.sky);
+        writeUrl();
+        return state().sky;
       },
     },
     {

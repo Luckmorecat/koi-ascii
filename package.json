@@ -1,6 +1,6 @@
 {
   "name": "koi-ascii",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "An ASCII-art koi pond for page backgrounds. WebGL2, no dependencies.",
   "keywords": [
     "koi",
