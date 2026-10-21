@@ -71,18 +71,51 @@ body {
   pointer-events: auto;
 }
 
-#perf .sky label {
+#perf .sky label,
+#perf .sky .row {
   display: flex;
   align-items: center;
   gap: 6px;
   white-space: pre;
 }
 
-#perf .sky input[type='range'] {
+#perf .sky .track {
   flex: 1;
   min-width: 0;
-  margin: 2px 0;
+}
+
+#perf .sky input[type='range'] {
+  display: block;
+  width: 100%;
+  margin: 2px 0 0;
   accent-color: #7fb3bb;
+}
+
+/* Day-part ticks: inset by half the range thumb so each tick line (the
+   button's left border) sits under the thumb's centre at that phase. */
+#perf .sky .ticks {
+  position: relative;
+  height: 12px;
+  margin: 0 8px 2px;
+}
+
+#perf .sky .ticks button {
+  position: absolute;
+  top: 0;
+  padding: 0;
+  color: rgba(185, 221, 226, 0.5);
+  font: 9px/12px 'JetBrains Mono', ui-monospace, monospace;
+  background: none;
+  border: 0;
+  border-left: 1px solid rgba(127, 179, 187, 0.35);
+  padding-left: 1px;
+  cursor: pointer;
+}
+
+#perf .sky .ticks button:hover,
+#perf .sky .ticks button.on {
+  color: #e8f6f8;
+  border-left-color: #7fb3bb;
 }
 
 #perf .sky input[type='number'] {

@@ -1,3 +1,4 @@
+import { DAY_PARTS, dayPartAt, type DayPart } from './lighting';
 import { LoopSource, MAX_CYCLE_S, MIN_CYCLE_S, type Sky } from './sky';
 
 /** Frames kept for the graph and the 1 % low. */
@@ -79,7 +80,9 @@ function clock(phase: number): string {
 class SkyControls {
   readonly root: HTMLDivElement;
   private slider: HTMLInputElement;
-  private readout: HTMLSpanElement;
+  private readout: HTMLDivElement;
+  private ticks: HTMLButtonElement[];
+  private part: DayPart | null = null;
 
   constructor(private sky: Sky) {
     this.root = document.createElement('div');
@@ -126,20 +129,50 @@ class SkyControls {
       cycle.title = 'Only a looping sky has a day length (?sky=loop)';
     }
 
-    this.readout = document.createElement('span');
-    const phaseRow = document.createElement('label');
-    phaseRow.append('phase ', this.slider);
+    // One tick per lighting keyframe, under the slider; clicking one jumps
+    // there (a loop carries on from it).
+    const ticks = document.createElement('div');
+    ticks.className = 'ticks';
+    this.ticks = DAY_PARTS.map((part) => {
+      const tick = document.createElement('button');
+      tick.type = 'button';
+      tick.textContent = part.name === 'noon' ? '12' : part.name === 'afternoon' ? 'a' : part.name[0];
+      tick.title = `${part.name}  ${part.at.toFixed(3)}  ${clock(part.at)}`;
+      tick.setAttribute('aria-label', `Jump to ${part.name} (${clock(part.at)})`);
+      tick.style.left = `${part.at * 100}%`;
+      tick.addEventListener('click', () => {
+        sky.hold(part.at);
+        sky.release();
+        this.sync();
+      });
+      ticks.append(tick);
+      return tick;
+    });
+    const track = document.createElement('div');
+    track.className = 'track';
+    track.append(this.slider, ticks);
+
+    this.readout = document.createElement('div');
+    // A div, not a label: clicking a tick must not also activate the slider.
+    const phaseRow = document.createElement('div');
+    phaseRow.className = 'row';
+    phaseRow.append('phase ', track);
     const cycleRow = document.createElement('label');
-    cycleRow.append('day ', cycle, ' s  ', this.readout);
-    this.root.append(phaseRow, cycleRow);
+    cycleRow.append('day ', cycle, ' s');
+    this.root.append(phaseRow, cycleRow, this.readout);
     this.sync();
   }
 
-  /** Mirrors the current phase into the slider and readout. */
+  /** Mirrors the current phase into the slider, ticks and readout. */
   sync(): void {
     const phase = this.sky.phase;
     if (!this.sky.holding) this.slider.value = String(phase);
-    this.readout.textContent = `${phase.toFixed(3)} ${clock(phase)} ${this.sky.source.kind}`;
+    const part = dayPartAt(phase);
+    if (part !== this.part) {
+      this.part = part;
+      this.ticks.forEach((t, i) => t.classList.toggle('on', DAY_PARTS[i] === part));
+    }
+    this.readout.textContent = `${phase.toFixed(3)} ${clock(phase)} ${part.name} · ${this.sky.source.kind}`;
   }
 }
 

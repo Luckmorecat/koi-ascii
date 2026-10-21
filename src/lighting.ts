@@ -121,17 +121,34 @@ const NOON: Omit<Key, 'at'> = {
   glow: 0.35,
 };
 
-const KEYS: Key[] = [
-  { at: 0.0, ...NIGHT },
-  { at: 0.21, ...BLUE },
-  { at: 0.265, ...GOLDEN },
-  { at: 0.34, ...MORNING },
-  { at: 0.5, ...NOON },
-  { at: 0.66, ...MORNING },
-  { at: 0.745, ...GOLDEN },
-  { at: 0.79, ...BLUE },
-  { at: 1.0, ...NIGHT },
+const KEYS: (Key & { part: string })[] = [
+  { at: 0.0, part: 'night', ...NIGHT },
+  { at: 0.21, part: 'blue hour', ...BLUE },
+  { at: 0.265, part: 'golden hour', ...GOLDEN },
+  { at: 0.34, part: 'morning', ...MORNING },
+  { at: 0.5, part: 'noon', ...NOON },
+  { at: 0.66, part: 'afternoon', ...MORNING },
+  { at: 0.745, part: 'golden hour', ...GOLDEN },
+  { at: 0.79, part: 'blue hour', ...BLUE },
+  { at: 1.0, part: 'night', ...NIGHT },
 ];
+
+export interface DayPart {
+  /** Phase where this part's keyframe sits; the part lasts until the next one. */
+  at: number;
+  name: string;
+}
+
+/** The lighting keyframes as named parts of the day, for the debug overlay. */
+export const DAY_PARTS: readonly DayPart[] = KEYS.slice(0, -1).map(({ at, part }) => ({ at, name: part }));
+
+/** The part of the day whose keyframe was passed last. */
+export function dayPartAt(phase: number): DayPart {
+  const p = ((phase % 1) + 1) % 1;
+  let i = 0;
+  while (i < DAY_PARTS.length - 1 && p >= DAY_PARTS[i + 1].at) i++;
+  return DAY_PARTS[i];
+}
 
 /** The moon hands over to the sun across [a, b] and back across [1 - b, 1 - a]. */
 const HANDOFF: [number, number] = [0.19, 0.23];
