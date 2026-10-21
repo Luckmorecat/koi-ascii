@@ -44,7 +44,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "prepublishOnly": "npm run typecheck && npm run build",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "shot": "node scripts/shot.mjs"
   },
   "devDependencies": {
     "@fontsource/jetbrains-mono": "^5.3.0",
