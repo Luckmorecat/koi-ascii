@@ -4,9 +4,9 @@ Every change passes the default check: `npm run typecheck && npm test` (under a 
 
 The browser suite `npm run test:browser` (~30 s, including a full build) is the browser-setup check. Run it when a change touches `test/browser/`, `playwright.config.ts`, `scripts/shot.mjs` or a `vite.*.config.ts`.
 
-# Colour
+# Scene
 
-Before adding or changing a colour the pond draws (a shader colour, a palette slot or preset, a new scene object), read `docs/colour-slots.md`.
+Before adding something the pond draws (a scene object, sky feature or material), read `docs/scene-features.md`; before adding or changing a colour (a shader colour, a palette slot or preset), read `docs/colour-slots.md`.
 
 # Browser checks
 
