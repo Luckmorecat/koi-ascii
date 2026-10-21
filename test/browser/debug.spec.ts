@@ -274,3 +274,38 @@ test('setSky: URL, state, panel toggles and a reseed', async ({ page }) => {
   expect(new URL(page.url()).searchParams.get('sky')).toBeNull();
   await expect(box).toBeChecked();
 });
+
+test('setSky and setPalette together survive a context loss and restore', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.95&seed=42');
+  await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.setSky({ moon: true, stars: false });
+    await k.setPalette({ palette: 'paper' });
+    const ext = document.querySelector<HTMLCanvasElement>('#pond canvas')!.getContext('webgl2')!.getExtension('WEBGL_lose_context')!;
+    Object.assign(window, { koiLoseContext: ext });
+    ext.loseContext();
+  });
+  const lost = () => page.evaluate(async () => (await (window.koi as unknown as Tools).getState()).contextLost);
+  await expect.poll(lost).toBe(true);
+  await page.evaluate(() => (window as unknown as { koiLoseContext: WEBGL_lose_context }).koiLoseContext.restoreContext());
+  await expect.poll(lost).toBe(false);
+
+  const state = await page.evaluate(async () => (await (window.koi as unknown as Tools).getState()) as { sky: unknown; render: { palette: string } });
+  expect(state.sky).toEqual({ stars: false, fireflies: true, darkNight: true, moon: true, sun: false });
+  expect(state.render.palette).toBe('paper');
+  const params = new URL(page.url()).searchParams;
+  expect(params.get('sky')).toBe('fireflies,darkNight,moon');
+  expect(params.get('palette')).toBe('paper');
+  await expect(page.locator('#koi-debug label').filter({ hasText: 'moon' }).locator('input[type=checkbox]')).toBeChecked();
+
+  // The restored renderer draws the moon: turning it off changes the frame.
+  const [on, off] = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.step();
+    const on = ((await k.capture()) as { dataUrl: string }).dataUrl;
+    await k.setSky({ moon: false });
+    const off = ((await k.capture()) as { dataUrl: string }).dataUrl;
+    return [on, off];
+  });
+  expect(on).not.toBe(off);
+});

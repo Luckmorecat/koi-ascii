@@ -738,3 +738,169 @@ test.describe('the sun under reduced motion', () => {
     expect(await flashes(page, i, 60)).toBeLessThanOrEqual(2);
   });
 });
+
+// ---------------------------------------------------------------- whole day
+
+interface DaySample {
+  phase: number;
+  /** Cells of each feature: stars, moon, fireflies, sun. */
+  cells: [number, number, number, number];
+  /** Summed brightness × density of those cells. */
+  light: [number, number, number, number];
+  /** Mean brightness of the drawn frame, 0…255. */
+  mean: number;
+}
+
+/**
+ * Redraws pond `i` (paused, so only the phase changes) at `steps` phases
+ * across the day and measures what each frame shows.
+ */
+function day(page: Page, i: number, steps: number): Promise<DaySample[]> {
+  return page.evaluate(
+    ([i, steps, mats]) => {
+      const core = window.koiTest.ponds[i].core!;
+      const gl = core.gl;
+      const r = core.renderer! as unknown as { cols: number; rows: number; scene: { fbo: WebGLFramebuffer } };
+      const info = new Uint8Array(r.cols * r.rows * 4);
+      const col = new Uint8Array(r.cols * r.rows * 4);
+      const px = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
+      const out: DaySample[] = [];
+      try {
+        for (let s = 0; s < steps; s++) {
+          const phase = s / steps;
+          core.sky.hold(phase);
+          if (!core.redraw()) throw new Error('nothing drawn');
+          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, r.scene.fbo);
+          gl.readBuffer(gl.COLOR_ATTACHMENT1);
+          gl.readPixels(0, 0, r.cols, r.rows, gl.RGBA, gl.UNSIGNED_BYTE, info);
+          gl.readBuffer(gl.COLOR_ATTACHMENT0);
+          gl.readPixels(0, 0, r.cols, r.rows, gl.RGBA, gl.UNSIGNED_BYTE, col);
+          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+          gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.UNSIGNED_BYTE, px);
+          const sample: DaySample = { phase, cells: [0, 0, 0, 0], light: [0, 0, 0, 0], mean: 0 };
+          for (let k = 0; k < info.length; k += 4) {
+            const f = mats.indexOf(info[k + 1]);
+            if (f < 0) continue;
+            sample.cells[f]++;
+            sample.light[f] += ((col[k] + col[k + 1] + col[k + 2]) / 3) * (col[k + 3] / 255);
+          }
+          let sum = 0;
+          for (let p = 0; p < px.length; p += 4) sum += px[p] + px[p + 1] + px[p + 2];
+          sample.mean = sum / ((px.length / 4) * 3);
+          out.push(sample);
+        }
+      } finally {
+        core.sky.release();
+      }
+      return out;
+    },
+    [i, steps, [M_STAR, M_MOON, M_FLY, M_SUN] as number[]] as const,
+  );
+}
+
+/** The largest change of `value` between neighbouring samples. */
+const biggestStep = (samples: DaySample[], value: (s: DaySample) => number) =>
+  Math.max(...samples.slice(1).map((s, k) => Math.abs(value(s) - value(samples[k]))));
+
+test('a whole day with every feature: nothing pops, the moon and sun never share the sky, fireflies only at dusk', async ({ page }) => {
+  await page.setViewportSize({ width: BIG.width, height: BIG.height });
+  // 1/800 of a day apart: under 5 frames of a 60 s loop (?cycle=60).
+  const STEPS = 800;
+  const all = await day(page, await pond(page, { time: NIGHT, sky: true, seed: 42 }, BIG), STEPS);
+  const none = await day(page, await pond(page, { time: NIGHT, sky: false, seed: 42 }, BIG), STEPS);
+
+  // Each feature fades: no step moves more than 15 % of its brightest frame
+  // (measured: about 7 % stars, 7 % moon, 9 % fireflies, 10 % sun glitter).
+  for (let f = 0; f < 4; f++) {
+    const peak = Math.max(...all.map((s) => s.light[f]));
+    expect(peak).toBeGreaterThan(0);
+    expect(biggestStep(all, (s) => s.light[f]) / peak).toBeLessThan(0.15);
+  }
+  // The whole frame changes no faster than the 0.2 pond's own lighting does.
+  expect(biggestStep(all, (s) => s.mean)).toBeLessThanOrEqual(biggestStep(none, (s) => s.mean) * 1.25);
+
+  for (const s of all) {
+    const [, moon, flies, sun] = s.cells;
+    expect(moon === 0 || sun === 0, `moon and sun at ${s.phase}`).toBe(true);
+    // The firefly window, fireflyWeight() in lighting.ts.
+    if (flies > 0) expect(s.phase, 'fireflies outside dusk').toBeGreaterThan(0.745);
+    if (flies > 0) expect(s.phase, 'fireflies outside dusk').toBeLessThan(0.95);
+  }
+  expect(all[Math.round(0.83 * STEPS)].cells[2]).toBeGreaterThan(0);
+});
+
+test('intensity 0.35 subdues every feature with the rest of the pond', async ({ page }) => {
+  await page.setViewportSize({ width: BIG.width, height: BIG.height });
+  // Night (stars, moon), dusk (fireflies), noon (sun glitter).
+  for (const phase of [0.95, 0.83, 0.5]) {
+    const i = await pond(page, { time: { mode: 'fixed', phase }, sky: true, seed: 42 }, BIG);
+    const feature = { 0.95: [M_STAR, M_MOON], 0.83: [M_FLY], 0.5: [M_SUN] }[phase]!;
+    const shown = await cells(page, i);
+    for (const m of feature) expect(shown.mat.includes(m), `material ${m} at ${phase}`).toBe(true);
+    const worst = await page.evaluate((i) => {
+      const { core, handle } = window.koiTest.ponds[i];
+      const gl = core!.gl;
+      const frame = (intensity: number) => {
+        handle.setIntensity(intensity);
+        if (!core!.redraw()) throw new Error('nothing drawn');
+        const px = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
+        gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        return px;
+      };
+      const [full, bg, part] = [frame(1), frame(0), frame(0.35)];
+      let worst = 0;
+      for (let p = 0; p < full.length; p++) {
+        if (p % 4 === 3) continue;
+        worst = Math.max(worst, Math.abs(part[p] - (bg[p] + 0.35 * (full[p] - bg[p]))));
+      }
+      return worst;
+    }, i);
+    // Every pixel, features included, is 35 % of the way from the background.
+    expect(worst, `phase ${phase}`).toBeLessThanOrEqual(1.5);
+    await page.evaluate((i) => window.koiTest.ponds[i].handle.destroy(), i);
+  }
+});
+
+test('setSky and setPalette together, and a context restore, keep the sky', async ({ page }) => {
+  await page.setViewportSize({ width: BIG.width, height: BIG.height });
+  const i = await pond(page, { time: NIGHT, seed: 42 }, BIG);
+  await page.evaluate((i) => {
+    const { handle } = window.koiTest.ponds[i];
+    handle.setSky({ moon: true, stars: false });
+    handle.setPalette('brand');
+  }, i);
+  const before = await cells(page, i);
+  expect(moonCells(before).length).toBeGreaterThan(50);
+  expect(starCount(before)).toBe(0);
+
+  await page.evaluate((i) => {
+    const ext = window.koiTest.ponds[i].core!.gl.getExtension('WEBGL_lose_context')!;
+    Object.assign(window, { koiLoseContext: ext });
+    ext.loseContext();
+  }, i);
+  await expect.poll(() => page.evaluate((i) => window.koiTest.ponds[i].core!.renderer === null, i)).toBe(true);
+  await page.evaluate(() => (window as unknown as { koiLoseContext: WEBGL_lose_context }).koiLoseContext.restoreContext());
+  await expect.poll(() => page.evaluate((i) => window.koiTest.ponds[i].restored, i)).toBe(1);
+  await page.evaluate((i) => window.koiTest.ponds[i].handle.pause(), i);
+  expect(await page.evaluate((i) => ({ ...window.koiTest.ponds[i].core!.renderer!.sky }), i)).toEqual({
+    stars: false,
+    fireflies: true,
+    darkNight: true,
+    moon: true,
+    sun: false,
+  });
+  const after = await cells(page, i);
+  expect(moonCells(after).length).toBeGreaterThan(50);
+  expect(starCount(after)).toBe(0);
+  // Still brand: the moon's commonest colour is the same as before the loss.
+  const moonColour = (c: Cells) => {
+    const seen = new Map<string, number>();
+    for (const k of moonCells(c)) {
+      const rgb = c.rgba.slice(k * 4, k * 4 + 3).join();
+      seen.set(rgb, (seen.get(rgb) ?? 0) + 1);
+    }
+    return [...seen].sort((a, b) => b[1] - a[1])[0][0];
+  };
+  expect(moonColour(after)).toBe(moonColour(before));
+  expect(await page.evaluate((i) => window.koiTest.ponds[i].errors, i)).toEqual([]);
+});
