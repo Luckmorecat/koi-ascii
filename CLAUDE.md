@@ -4,6 +4,10 @@ Every change passes the default check: `npm run typecheck && npm test` (vitest, 
 
 The browser suite `npm run test:browser` (Playwright on the GPU, ~30 s including a full build) is the browser-setup check. Run it when a change touches `test/browser/`, `playwright.config.ts`, `scripts/shot.mjs` or a `vite*.config.ts`. Specs live in `test/browser/`; `debug.spec.ts` covers `?debug` on `/demo/index.html`.
 
+# Colour
+
+Before adding or changing a colour the pond draws (a shader colour, a palette slot or preset, a new scene object), read `docs/colour-slots.md`.
+
 # Browser checks
 
 All browser runs use the GPU, launched only through `test/browser/gpu.ts` (it refuses to run on SwiftShader). Both tools below start and stop their own Vite server.
