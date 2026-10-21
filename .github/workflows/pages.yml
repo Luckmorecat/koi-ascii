@@ -1,10 +1,11 @@
 # Builds the demo (demo/) and deploys it to GitHub Pages:
 # https://luckmorecat.github.io/koi-ascii/
+# release.yml calls it after each release, so the demo matches what npm
+# installs; run it by hand to redeploy without a release.
 name: Pages
 
 on:
-  push:
-    branches: [main]
+  workflow_call:
   workflow_dispatch:
 
 permissions:

@@ -1,0 +1,95 @@
+# Releases package.json's version when it reaches main and isn't released
+# yet: publishes it to npm (trusted publishing, so no token; provenance is
+# automatic), tags v<version>, creates the GitHub Release from its
+# CHANGELOG.md entry, then deploys the demo (pages.yml).
+#
+# Every step skips what is already done, so after a failure "Re-run jobs"
+# finishes the release. Prereleases (0.4.0-beta.1) go to npm's `next`
+# dist-tag as a GitHub prerelease and leave the demo alone.
+#
+# npm needs koi-ascii's trusted publisher set to this repo and release.yml
+# (npmjs.com → package settings → Trusted publishing).
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [package.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # tag and GitHub Release
+      id-token: write # npm trusted publishing
+    outputs:
+      deploy: ${{ steps.state.outputs.deploy }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - id: state
+        name: Find what is left to do
+        run: |
+          v=$(node -p "require('./package.json').version")
+          publish=true; tag=true; release=true
+          [ -n "$(npm view "koi-ascii@$v" version 2>/dev/null)" ] && publish=false
+          git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null && tag=false
+          gh release view "v$v" >/dev/null 2>&1 && release=false
+          deploy=false
+          if [[ $publish$tag$release == *true* && $v != *-* ]]; then deploy=true; fi
+          dist_tag=latest; [[ $v == *-* ]] && dist_tag=next
+          tee -a "$GITHUB_OUTPUT" <<EOF
+          version=$v
+          dist_tag=$dist_tag
+          publish=$publish
+          tag=$tag
+          release=$release
+          deploy=$deploy
+          EOF
+
+      - name: Check the lockfile and changelog
+        run: npm run release:check -- --notes "$RUNNER_TEMP/notes.md"
+
+      - name: Test and publish
+        if: steps.state.outputs.publish == 'true'
+        run: |
+          npm ci
+          npm test
+          npm publish --tag ${{ steps.state.outputs.dist_tag }}
+
+      - name: Tag
+        if: steps.state.outputs.tag == 'true'
+        run: >
+          gh api "repos/$GITHUB_REPOSITORY/git/refs"
+          -f ref="refs/tags/v${{ steps.state.outputs.version }}" -f sha="$GITHUB_SHA"
+
+      - name: Create the GitHub Release
+        if: steps.state.outputs.release == 'true'
+        run: >
+          gh release create "v${{ steps.state.outputs.version }}" --verify-tag
+          --title "v${{ steps.state.outputs.version }}" --notes-file "$RUNNER_TEMP/notes.md"
+          ${{ steps.state.outputs.dist_tag == 'next' && '--prerelease' || '' }}
+
+  pages:
+    needs: release
+    if: needs.release.outputs.deploy == 'true'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
