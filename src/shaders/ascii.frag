@@ -27,6 +27,9 @@ uniform vec2 uGlowScale;  // grid px → glow texture coordinates
 
 out vec4 fragColor;
 
+// Rec.601 luma on sRGB values: what the ramp and filter were tuned with (from
+// the prototype). look.ts greys lighting with Rec.709 and palette.ts tests
+// "light" with WCAG luminance (Q13); each suits its use, so they differ.
 float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
 // Ramp: brightness above the pond's background picks a colour along the stops.

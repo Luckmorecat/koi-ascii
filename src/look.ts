@@ -101,6 +101,8 @@ export function rolesScene(r: ResolvedRoles): SceneColors {
   };
 }
 
+// Rec.709 weights, for greying light colours. Not the shader's Rec.601 lum()
+// or palette.ts's WCAG luminance: see the note on lum() in ascii.frag.
 const luma = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 const grey = (c: readonly number[]): Vec3 => {
   const y = luma(c);

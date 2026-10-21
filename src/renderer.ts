@@ -64,6 +64,7 @@ export class Renderer {
   private readonly stopBuf = new Float32Array(5 * 3);
   /** Scene colours for the active palette (roles replace the pond's). */
   private sceneColors: Readonly<SceneColors> = POND_SCENE;
+  private uploadedColors: Readonly<SceneColors> | null = null;
 
   private atlas: Atlas | null = null;
   private ripple: [Target, Target] | null = null;
@@ -241,7 +242,12 @@ export class Renderer {
     gl.viewport(0, 0, this.cols, this.rows);
     const unit = pond.unit;
     const sp = this.sceneProg.use();
-    for (const [name, c] of Object.entries(colors)) sp.vec3(name, c[0], c[1], c[2]);
+    // Uniforms persist per program: upload the colours only when they change
+    // (setLook, or toggling the raw view).
+    if (colors !== this.uploadedColors) {
+      for (const [name, c] of Object.entries(colors)) sp.vec3(name, c[0], c[1], c[2]);
+      this.uploadedColors = colors;
+    }
     sp.float('uRoles', roles ? 1 : 0)
       .texture('uFish', 0, this.fishTex)
       .texture('uRipple', 1, ripple[0].textures[0])
