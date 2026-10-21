@@ -66,8 +66,8 @@ const report = {
 };
 try {
   if (opt.base) {
-    await withBaseWorktree(opt.base, (dir, { sha }) => {
-      report.base = { rev: opt.base, sha };
+    await withBaseWorktree(opt.base, (dir) => {
+      report.base = { rev: opt.base, sha: git('rev-parse', `${opt.base}^{commit}`) };
       return measureAll(dir);
     });
   } else await measureAll(null);
