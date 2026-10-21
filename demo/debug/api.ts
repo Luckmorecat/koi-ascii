@@ -503,7 +503,11 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
         current.handle.pause();
         let profile;
         try {
-          profile = await profileDraws(c.gl, names, () => c.redraw(), (args.frames as number | undefined) ?? 400);
+          const redraw = () => {
+            // A collapsed container draws nothing: no numbers rather than empty ones.
+            if (!c.redraw()) throw nothingDrawn(c);
+          };
+          profile = await profileDraws(c.gl, names, redraw, (args.frames as number | undefined) ?? 400);
         } finally {
           profiling = false;
           // The pause state as it is now: a pause() or resume() may have come in meanwhile.
@@ -692,7 +696,8 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
       needs: 'nothing',
       run: () => {
         paused = false;
-        current.handle.resume();
+        // A running frame loop would draw through the profile's timer queries; it resumes once that ends.
+        if (!profiling) current.handle.resume();
         return { paused, frame: state().frame };
       },
     },

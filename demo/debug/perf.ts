@@ -147,13 +147,14 @@ const quantile = (sorted: number[], q: number) => sorted[Math.min(sorted.length 
  * GPU time per pass: wraps gl.drawArrays in a TIME_ELAPSED query per draw,
  * names each draw by the program in use, and calls `redraw` `frames` times
  * (after a few untimed warm-up frames), yielding to the event loop every 20
- * frames. drawArrays is restored even if a redraw throws. Null without
+ * frames. `redraw` throws when nothing could be drawn; that error ends the run
+ * and drawArrays is restored either way. Null without
  * EXT_disjoint_timer_query_webgl2.
  */
 export async function profileDraws(
   gl: WebGL2RenderingContext,
   names: ReadonlyMap<WebGLProgram, string>,
-  redraw: () => boolean,
+  redraw: () => void,
   frames: number,
 ): Promise<DrawProfile | null> {
   const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerExt | null;
@@ -185,6 +186,9 @@ export async function profileDraws(
       cpuMs += performance.now() - t0;
       if (frame % 20 === 19) await yieldNow();
     }
+  } catch (err) {
+    for (const [, , q] of pending) gl.deleteQuery(q);
+    throw err;
   } finally {
     gl.drawArrays = draw;
   }

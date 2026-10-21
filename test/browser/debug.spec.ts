@@ -201,6 +201,30 @@ test('a second profile while one runs is refused, and a pause made meanwhile hol
   expect(r.still).toBe(true);
 });
 
+test('a resume during a profile waits for it, and a collapsed pond fails the profile', async ({ page }) => {
+  await openDebug(page);
+  const r = await page.evaluate(async () => {
+    const koi = window.koi!;
+    await koi.call('pause');
+    const profile = koi.call('profile', { frames: 200 });
+    await koi.call('resume');
+    const before = ((await koi.call('getState')) as { ok: true; result: { frame: number } }).result.frame;
+    await new Promise((ok) => setTimeout(ok, 50));
+    const during = ((await koi.call('getState')) as { ok: true; result: { frame: number } }).result.frame;
+    const done = await profile;
+    await new Promise((ok) => setTimeout(ok, 300));
+    const after = ((await koi.call('getState')) as { ok: true; result: { frame: number } }).result.frame;
+    await koi.call('setViewport', { width: 16, height: 16 });
+    document.querySelector<HTMLElement>('#pond')!.style.display = 'none';
+    const collapsed = await koi.call('profile', { frames: 10 });
+    return { held: during === before, done, resumed: after > during, collapsed };
+  });
+  expect(r.held).toBe(true);
+  if (r.done.ok) expect(r.done.result).toHaveProperty('gpuTimer');
+  expect(r.resumed).toBe(true);
+  expect(r.collapsed).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+});
+
 test('step pauses and advances the frame counter exactly', async ({ page }) => {
   await openDebug(page);
   const r = await page.evaluate(async () => {
