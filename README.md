@@ -463,6 +463,7 @@ console.log(await page.evaluate(() => koi.help()));
 | `setTime`     | `mode?`, `phase?`, `cycle?`, `hold?` | Time of day; `hold` keeps the phase until a call with `hold: false`. |
 | `setDayPart`  | `part`                        | Jumps to a lighting keyframe (`night`, `blue-hour-am`, … `noon` …).    |
 | `getPerf`     |                               | fps, 1% low, frame / CPU / GPU ms (GPU `null` without the timer extension), canvas size, GPU string, software flag, seed. |
+| `profile`     | `frames?` (400)               | GPU µs per pass (`scene`, `glow`, `ascii`, `fly`; `frame` is all of them), median and p90, from timer queries around each draw over `frames` redraws of the paused frame. `{ gpuTimer: false }` without the timer extension. |
 | `setRender`   | `view?`, `glow?`              | `final` / `raw` view and the glow halo. The raw view ignores the palette and intensity. |
 | `setPalette`  | `palette`                     | Switches to a preset (`pond`, `mono`, `phosphor`, `amber`, `paper`, `brand`). |
 | `setIntensity` | `intensity`                  | 0 background only … 1 full pond.                                       |

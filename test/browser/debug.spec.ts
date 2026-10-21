@@ -63,7 +63,7 @@ test('with ?debug: koi.ready resolves and tools() lists every tool with a schema
   await expect(page.locator('#koi-debug')).toBeVisible();
   const tools = await page.evaluate(() => window.koi!.tools());
   const names = tools.map((t) => t.name);
-  for (const n of ['getState', 'setTime', 'reseed', 'step', 'capture', 'setViewport', 'getPerf', 'setRender', 'setPalette', 'setIntensity', 'setSky']) {
+  for (const n of ['getState', 'setTime', 'reseed', 'step', 'capture', 'setViewport', 'getPerf', 'profile', 'setRender', 'setPalette', 'setIntensity', 'setSky']) {
     expect(names).toContain(n);
   }
   for (const t of tools) {
@@ -156,6 +156,30 @@ test('at dusk the fireflies replay with a seed after a reseed, and setSky turns 
   });
   expect(r.same).toBe(true);
   expect(r.flyless).toBe(true);
+});
+
+test('profile times each pass, then leaves the pond running as it was', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.83');
+  const r = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    const before = (await k.getState()).frame as number;
+    const profile = await k.profile({ frames: 40 });
+    await new Promise((done) => setTimeout(done, 300));
+    const state = await k.getState();
+    return { profile, paused: state.paused as boolean, ran: (state.frame as number) > before };
+  });
+  expect(r.paused).toBe(false);
+  expect(r.ran).toBe(true);
+  if (!r.profile.gpuTimer) return expect(r.profile).toEqual({ gpuTimer: false });
+  for (const pass of ['scene', 'ascii', 'frame']) {
+    const t = r.profile.passes[pass];
+    expect(t.n, pass).toBe(40);
+    expect(t.median, pass).toBeGreaterThan(0);
+    expect(t.p90, pass).toBeGreaterThanOrEqual(t.median);
+  }
+  expect(r.profile.passes.frame.median).toBeGreaterThanOrEqual(r.profile.passes.scene.median);
+  expect(r.profile.cells.cols).toBeGreaterThan(0);
+  expect(typeof r.profile.cpuMs).toBe('number');
 });
 
 test('step pauses and advances the frame counter exactly', async ({ page }) => {

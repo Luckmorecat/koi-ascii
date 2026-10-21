@@ -7,7 +7,7 @@ import { koiPalettes, type KoiPond, type KoiPondError, type KoiPondPaletteName, 
 import { attachHooks, DAY_PARTS, dayPartAt, LoopSource, MAX_CYCLE_S, MIN_CYCLE_S, type PondCore } from '../../src/internal';
 import { SKY_FEATURES, type SkyFeature } from '../../src/sky-features';
 import { MAX_SEED, sceneTime, writeScene, type PondLook, type SceneState } from '../scene';
-import { PerfRecorder } from './perf';
+import { PerfRecorder, profileDraws, type PassTiming } from './perf';
 import { describeProp, validate, type ObjectSchema } from './schema';
 
 export type ErrorCode = 'unknown-tool' | 'invalid-args' | 'not-ready' | 'context-lost' | 'pond-failed' | 'internal';
@@ -466,6 +466,57 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
           gpu: c.stats.gpu,
           software: c.stats.software,
           seed: c.stats.seed,
+        };
+      },
+    },
+    {
+      name: 'profile',
+      description:
+        'GPU time per pass: pauses, redraws the current frame `frames` times with a timer query around every ' +
+        'draw (EXT_disjoint_timer_query_webgl2), then restores the pause state. Returns per pass (scene, glow, ' +
+        'ascii, fly …; frame is all of them) the median and p90 GPU µs per frame with n, plus disjoint (a GPU ' +
+        'clock event spoiled the run), cells, canvas size, GPU string and cpuMs (mean submit time per redraw). A ' +
+        "redraw doesn't advance time, so the ripple sim isn't in it. { gpuTimer: false } without the extension. " +
+        'Compare revisions with `npm run perf`.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          frames: { type: 'integer', minimum: 1, maximum: 5000, default: 400, description: 'Timed redraws.' },
+        },
+        additionalProperties: false,
+      },
+      annotations: { section: 'perf', readOnly: true },
+      needs: 'renderer',
+      run: async (args) => {
+        const c = core('renderer');
+        const r = c.renderer!;
+        // The renderer's programs, by field name: sceneProg → scene.
+        const names = new Map<WebGLProgram, string>();
+        for (const [key, value] of Object.entries(r)) {
+          const handle = (value as { handle?: unknown } | null)?.handle;
+          if (key.endsWith('Prog') && handle instanceof WebGLProgram) names.set(handle, key.slice(0, -4));
+        }
+        const wasPaused = paused;
+        current.handle.pause();
+        let profile;
+        try {
+          profile = await profileDraws(c.gl, names, () => c.redraw(), (args.frames as number | undefined) ?? 400);
+        } finally {
+          if (!wasPaused && current.core === c) current.handle.resume();
+        }
+        if (!profile) return { gpuTimer: false };
+        if (c.renderer !== r) throw nothingDrawn(c);
+        const passes: Record<string, PassTiming> = {};
+        for (const [pass, t] of Object.entries(profile.passes)) passes[pass] = { n: t.n, median: round(t.median, 2), p90: round(t.p90, 2) };
+        return {
+          gpuTimer: true,
+          passes,
+          disjoint: profile.disjoint,
+          cells: { cols: r.cols, rows: r.rows },
+          width: c.canvas.width,
+          height: c.canvas.height,
+          gpu: c.stats.gpu,
+          cpuMs: round(profile.cpuMs, 4),
         };
       },
     },
