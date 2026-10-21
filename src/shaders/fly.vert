@@ -18,7 +18,7 @@ void main() {
   float v = aFly.z * uFlies;
   vBright = v;
   gl_PointSize = 1.0;
-  // Cell rows run down from the top of the pond, as in scene.frag.
+  // Cell rows run down from the top of the pond, as in the scene pass.
   vec2 cell = floor((aFly.xy - uOriginCss) / uCell);
   vec2 ndc = (cell + 0.5) / vec2(uGrid) * 2.0 - 1.0;
   // Too faint: outside the clip volume, so the point is dropped.

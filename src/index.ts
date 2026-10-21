@@ -107,7 +107,7 @@ export interface KoiPondSkyFeatures {
 
 /**
  * The night sky. `true` turns every feature on, `false` every one off (the
- * pond as it was in 0.2); an object changes only the features it names.
+ * pond as it was in 0.1); an object changes only the features it names.
  * Invalid values fall back one by one with a `console.warn` (never a throw).
  */
 export type KoiPondSky = boolean | KoiPondSkyFeatures;

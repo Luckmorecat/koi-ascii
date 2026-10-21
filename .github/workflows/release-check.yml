@@ -1,0 +1,21 @@
+# Fails a PR whose package.json version couldn't be released: the lockfile
+# disagrees or CHANGELOG.md has no entry for it. Catching this before the
+# merge keeps main from holding a version release.yml can't publish.
+name: Release check
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm run release:check

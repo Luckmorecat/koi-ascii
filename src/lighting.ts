@@ -327,7 +327,7 @@ export interface LightingOptions {
   darkNight?: boolean;
 }
 
-/** Lighting at `phase`; without options (or `darkNight` false) exactly the 0.2 lighting. */
+/** Lighting at `phase`; without options (or `darkNight` false) exactly the 0.1 lighting. */
 export function lightingAt(phase: number, options: LightingOptions = {}): Lighting {
   const p = ((phase % 1) + 1) % 1;
 

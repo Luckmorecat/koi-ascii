@@ -7,7 +7,7 @@ import { mix, POND_ACCENT, POND_BG, POND_METALLIC, WHITE, type ResolvedPalette, 
 
 type Vec3 = [number, number, number];
 
-/** Every colour the scene pass draws with: uniforms of the same names in scene.frag, and fly.frag for the fireflies. */
+/** Every colour the scene pass draws with: uniforms of the same names in src/shaders/scene/, and fly.frag for the fireflies. */
 export interface SceneColors {
   uWaterDim: RGB;
   uWaterLit: RGB;
@@ -43,13 +43,13 @@ export interface SceneColors {
   uMoonCol: RGB;
   /** The sun's glitter (light), at full strength. Pond: gold, tinted by the light's hue; roles: the highlight. */
   uSunCol: RGB;
-  /** Fireflies (pigment: their own glow, not reflected light), at full brightness. Drawn by fly.frag, not scene.frag. */
+  /** Fireflies (pigment: their own glow, not reflected light), at full brightness. Drawn by fly.frag, not the scene pass. */
   uFlyCol: RGB;
 }
 
 const OGON_GOLD = POND_METALLIC;
 
-/** Today's pond, exactly as the constants scene.frag had before palettes (A3). */
+/** Today's pond, exactly as the constants the scene shader had before palettes (A3). */
 const pondScene: SceneColors = {
   uWaterDim: [0.1, 0.27, 0.31],
   uWaterLit: [0.27, 0.58, 0.61],

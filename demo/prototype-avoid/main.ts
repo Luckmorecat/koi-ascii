@@ -4,7 +4,7 @@
 // and scene.frag.
 import '@fontsource/jetbrains-mono/latin-600.css';
 import './style.css';
-import { createKoiPond } from '../../src/index';
+import { createKoiPond, type KoiPondPaletteName } from '../../src/index';
 import { attachHooks, type PondCore } from '../../src/internal';
 import { profileDraws } from '../debug/perf';
 import { rectSdf, type AvoidZone } from '../../src/koi/koi';
@@ -47,7 +47,8 @@ document.body.classList.toggle('show', show);
 
 const container = document.getElementById('pond') as HTMLDivElement;
 const seed = params.has('seed') ? Number(params.get('seed')) : undefined;
-const handle = createKoiPond(container, { seed, time: { mode: 'fixed', phase: Number(params.get('phase') ?? 0.5) } });
+const palette = (params.get('palette') ?? undefined) as KoiPondPaletteName | undefined;
+const handle = createKoiPond(container, { seed, palette, time: { mode: 'fixed', phase: Number(params.get('phase') ?? 0.5) } });
 
 const elements = [...document.querySelectorAll<HTMLElement>('[data-avoid]')];
 const stats = { measureMs: 0, inSteer: 0, inUnder: 0, samples: 0, zones: 0 };
