@@ -182,6 +182,25 @@ test('profile times each pass, then leaves the pond running as it was', async ({
   expect(typeof r.profile.cpuMs).toBe('number');
 });
 
+test('a second profile while one runs is refused, and a pause made meanwhile holds', async ({ page }) => {
+  await openDebug(page);
+  const r = await page.evaluate(async () => {
+    const koi = window.koi!;
+    const first = koi.call('profile', { frames: 200 });
+    const second = await koi.call('profile', { frames: 10 });
+    await koi.call('pause');
+    const done = await first;
+    const frame = (await koi.call('getState')) as { ok: true; result: { frame: number; paused: boolean } };
+    await new Promise((ok) => setTimeout(ok, 300));
+    const later = (await koi.call('getState')) as { ok: true; result: { frame: number } };
+    return { second, firstOk: done.ok, paused: frame.result.paused, still: later.result.frame === frame.result.frame };
+  });
+  expect(r.second).toMatchObject({ ok: false, error: { code: 'not-ready' } });
+  expect(r.firstOk).toBe(true);
+  expect(r.paused).toBe(true);
+  expect(r.still).toBe(true);
+});
+
 test('step pauses and advances the frame counter exactly', async ({ page }) => {
   await openDebug(page);
   const r = await page.evaluate(async () => {

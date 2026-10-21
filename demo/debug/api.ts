@@ -185,6 +185,7 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
   const listeners: { [K in keyof Events]: Set<(e: Events[K]) => void> } = { change: new Set(), frame: new Set() };
   const perf = new PerfRecorder();
   let paused = false;
+  let profiling = false;
   let viewport: { width?: number; height?: number; dpr?: number } | null = null;
   let current: Mount;
   let interval = 0;
@@ -496,13 +497,17 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
           const handle = (value as { handle?: unknown } | null)?.handle;
           if (key.endsWith('Prog') && handle instanceof WebGLProgram) names.set(handle, key.slice(0, -4));
         }
-        const wasPaused = paused;
+        // Two at once would nest their timer queries and restore each other's drawArrays wrapper.
+        if (profiling) throw new ToolFailure('not-ready', 'A profile is already running; await it first.');
+        profiling = true;
         current.handle.pause();
         let profile;
         try {
           profile = await profileDraws(c.gl, names, () => c.redraw(), (args.frames as number | undefined) ?? 400);
         } finally {
-          if (!wasPaused && current.core === c) current.handle.resume();
+          profiling = false;
+          // The pause state as it is now: a pause() or resume() may have come in meanwhile.
+          if (!paused && current.core === c) current.handle.resume();
         }
         if (!profile) return { gpuTimer: false };
         if (c.renderer !== r) throw nothingDrawn(c);
