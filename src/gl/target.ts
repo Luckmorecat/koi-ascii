@@ -27,18 +27,22 @@ export function createTexture(
   return tex;
 }
 
-/** A framebuffer with one colour attachment per format, or null if incomplete. */
+/**
+ * A framebuffer with one colour attachment per format, or null if incomplete.
+ * Attachments sample NEAREST unless `filter` says otherwise.
+ */
 export function createTarget(
   gl: WebGL2RenderingContext,
   width: number,
   height: number,
   formats: TexFormat[],
+  filter: number = gl.NEAREST,
 ): Target | null {
   const fbo = gl.createFramebuffer();
   if (!fbo) return null;
   gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
   const textures = formats.map((f, i) => {
-    const tex = createTexture(gl, width, height, f);
+    const tex = createTexture(gl, width, height, f, filter);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, tex, 0);
     return tex;
   });

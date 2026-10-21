@@ -3,6 +3,7 @@ import commonSrc from './shaders/common.glsl?raw';
 import rippleSrc from './shaders/ripple.frag?raw';
 import sceneSrc from './shaders/scene.frag?raw';
 import asciiSrc from './shaders/ascii.frag?raw';
+import glowSrc from './shaders/glow.frag?raw';
 import { Program } from './gl/program';
 import { createTarget, createTexture, deleteTarget, type Target, type TexFormat } from './gl/target';
 import { buildAtlas, glyphDefines, type Atlas } from './glyphs';
@@ -22,12 +23,18 @@ const FONT_MAX = 22;
 /** Smallest font in device px; below this the outline glyphs lose their shape. */
 const FONT_MIN_DEVICE = 11;
 const BG: [number, number, number] = [0.024, 0.075, 0.102];
+/** Halo brightness at glowStrength 1; kept low so glyphs never wash into blobs. */
+const GLOW_GAIN = 2.2;
+/** Share of the sky's reflection (warm at dawn and dusk) laid over the background. */
+const BG_SKY = 0.15;
 
 /**
- * Three passes per frame:
+ * Four passes per frame:
  *  1. ripple — wave equation on a coarse grid (ping-pong)
  *  2. scene  — one fragment per character cell → colour and glyph
- *  3. ascii  — per screen pixel, copy the cell's glyph from the atlas
+ *  3. glow   — one fragment per cell → blurred halo of the bright cells
+ *              (skipped on software renderers: no target, no program)
+ *  4. ascii  — per screen pixel, copy the cell's glyph from the atlas
  */
 export class Renderer {
   raw = false;
@@ -46,12 +53,14 @@ export class Renderer {
   private readonly rippleProg: Program;
   private readonly sceneProg: Program;
   private readonly asciiProg: Program;
+  private readonly glowProg: Program | null;
   private readonly fishTex: WebGLTexture;
   private readonly dropBuf = new Float32Array(MAX_DROPS * 4);
 
   private atlas: Atlas | null = null;
   private ripple: [Target, Target] | null = null;
   private scene: Target | null = null;
+  private glow: Target | null = null;
   private rippleClock = 0;
   private devW = 1;
   private devH = 1;
@@ -62,7 +71,8 @@ export class Renderer {
   private simW = 0;
   private simH = 0;
 
-  constructor(gl: WebGL2RenderingContext, fontFamily: string) {
+  /** `software`: a CPU rasteriser; it gets no glow pass (per-cell lighting stays). */
+  constructor(gl: WebGL2RenderingContext, fontFamily: string, software: boolean) {
     this.gl = gl;
     this.fontFamily = fontFamily;
 
@@ -84,7 +94,8 @@ export class Renderer {
     const vertex = `#version 300 es\n${vertexSrc}`;
     this.rippleProg = new Program(gl, vertex, fragment(rippleSrc), 'ripple');
     this.sceneProg = new Program(gl, vertex, fragment(sceneSrc), 'scene');
-    this.asciiProg = new Program(gl, vertex, fragment(asciiSrc), 'ascii');
+    this.glowProg = software ? null : new Program(gl, vertex, fragment(glowSrc), 'glow');
+    this.asciiProg = new Program(gl, vertex, fragment((software ? '' : '#define GLOW\n') + asciiSrc), 'ascii');
 
     const vao = gl.createVertexArray();
     if (!vao) throw new Error('Could not create a vertex array');
@@ -133,6 +144,14 @@ export class Renderer {
       const rgba8: TexFormat = { internal: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE };
       this.scene = createTarget(gl, cols, rows, [rgba8, rgba8]);
       if (!this.scene) throw new Error('Scene render target is not supported');
+      if (this.glow) deleteTarget(gl, this.glow);
+      // Linear, so the ASCII pass reads a smooth halo across cell borders.
+      this.glow = null;
+      if (this.glowProg) {
+        // The ascii program samples uGlow whenever it was compiled with GLOW.
+        this.glow = createTarget(gl, cols, rows, [rgba8], gl.LINEAR);
+        if (!this.glow) throw new Error('Glow render target is not supported');
+      }
       this.cols = cols;
       this.rows = rows;
     }
@@ -225,10 +244,25 @@ export class Renderer {
       .float('uCalm', pond.calm ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
-    // 3. Glyphs to the screen.
+    // 3. Halo of the bright cells, at cell resolution. Not needed in the raw view.
+    const glowProg = this.raw ? null : this.glowProg;
+    if (glowProg && this.glow) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.glow.fbo);
+      glowProg
+        .use()
+        .texture('uScene0', 0, scene.textures[0])
+        .texture('uScene1', 1, scene.textures[1])
+        .ivec2('uGrid', this.cols, this.rows)
+        .float('uAspect', atlas.cellW / atlas.cellH)
+        .float('uGain', light.glowStrength * GLOW_GAIN);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+
+    // 4. Glyphs to the screen, on a background graded by the time of day.
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.devW, this.devH);
-    this.asciiProg
+    const bg = BG.map((v, i) => v * light.water[i] + light.sky[i] * BG_SKY) as [number, number, number];
+    const ascii = this.asciiProg
       .use()
       .texture('uScene0', 0, scene.textures[0])
       .texture('uScene1', 1, scene.textures[1])
@@ -237,8 +271,15 @@ export class Renderer {
       .ivec2('uOrigin', this.originX, this.originY)
       .ivec2('uGrid', this.cols, this.rows)
       .int('uCanvasH', this.devH)
-      .vec3('uBg', ...BG)
+      .vec3('uBg', ...bg)
+      .vec3('uRawBg', ...BG)
       .int('uRaw', this.raw ? 1 : 0);
+    if (this.glow) {
+      // Bound in the raw view too (stale there, but the raw branch never reads it).
+      ascii
+        .texture('uGlow', 3, this.glow.textures[0])
+        .vec2('uGlowScale', 1 / (this.cols * atlas.cellW), 1 / (this.rows * atlas.cellH));
+    }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 

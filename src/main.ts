@@ -89,7 +89,7 @@ async function main(): Promise<void> {
   let renderer: Renderer | null = null;
   const createRenderer = (): boolean => {
     try {
-      renderer = new Renderer(gl, FONT_FAMILY);
+      renderer = new Renderer(gl, FONT_FAMILY, software);
       sizeDirty = true;
       return true;
     } catch (err) {
