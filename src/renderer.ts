@@ -38,6 +38,8 @@ const BG_SKY = 0.15;
  */
 export class Renderer {
   raw = false;
+  /** Debug switch for the halo; off draws the final view without it. Software renderers have none. */
+  glow = true;
   cols = 0;
   rows = 0;
   /** Time of day for the current frame; drives the lighting. */
@@ -60,7 +62,7 @@ export class Renderer {
   private atlas: Atlas | null = null;
   private ripple: [Target, Target] | null = null;
   private scene: Target | null = null;
-  private glow: Target | null = null;
+  private glowTarget: Target | null = null;
   private rippleClock = 0;
   private devW = 1;
   private devH = 1;
@@ -144,13 +146,13 @@ export class Renderer {
       const rgba8: TexFormat = { internal: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE };
       this.scene = createTarget(gl, cols, rows, [rgba8, rgba8]);
       if (!this.scene) throw new Error('Scene render target is not supported');
-      if (this.glow) deleteTarget(gl, this.glow);
+      if (this.glowTarget) deleteTarget(gl, this.glowTarget);
       // Linear, so the ASCII pass reads a smooth halo across cell borders.
-      this.glow = null;
+      this.glowTarget = null;
       if (this.glowProg) {
         // The ascii program samples uGlow whenever it was compiled with GLOW.
-        this.glow = createTarget(gl, cols, rows, [rgba8], gl.LINEAR);
-        if (!this.glow) throw new Error('Glow render target is not supported');
+        this.glowTarget = createTarget(gl, cols, rows, [rgba8], gl.LINEAR);
+        if (!this.glowTarget) throw new Error('Glow render target is not supported');
       }
       this.cols = cols;
       this.rows = rows;
@@ -246,8 +248,13 @@ export class Renderer {
 
     // 3. Halo of the bright cells, at cell resolution. Not needed in the raw view.
     const glowProg = this.raw ? null : this.glowProg;
-    if (glowProg && this.glow) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.glow.fbo);
+    if (glowProg && this.glowTarget && !this.glow) {
+      // Switched off: an empty halo, since the ascii pass always adds it.
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowTarget.fbo);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    } else if (glowProg && this.glowTarget) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowTarget.fbo);
       glowProg
         .use()
         .texture('uScene0', 0, scene.textures[0])
@@ -274,10 +281,10 @@ export class Renderer {
       .vec3('uBg', ...bg)
       .vec3('uRawBg', ...BG)
       .int('uRaw', this.raw ? 1 : 0);
-    if (this.glow) {
+    if (this.glowTarget) {
       // Bound in the raw view too (stale there, but the raw branch never reads it).
       ascii
-        .texture('uGlow', 3, this.glow.textures[0])
+        .texture('uGlow', 3, this.glowTarget.textures[0])
         .vec2('uGlowScale', 1 / (this.cols * atlas.cellW), 1 / (this.rows * atlas.cellH));
     }
     gl.drawArrays(gl.TRIANGLES, 0, 3);

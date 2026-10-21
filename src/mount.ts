@@ -163,10 +163,13 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       ? new Pond(Math.max(window.innerWidth, MIN_POND_PX), Math.max(window.innerHeight, MIN_POND_PX), seed)
       : new Pond(rect.width, rect.height, seed);
 
+    // Debug override of the device pixel ratio (PondCore.setDpr).
+    let dprOverride: number | null = null;
+    const deviceRatio = () => dprOverride ?? (window.devicePixelRatio || 1);
     // Canvas size in device pixels, applied at the start of a frame.
     const measure = () => {
       const r = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = deviceRatio();
       return { w: Math.max(1, Math.round(r.width * dpr)), h: Math.max(1, Math.round(r.height * dpr)), dpr };
     };
     let size = measure();
@@ -179,7 +182,7 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
         return;
       }
       collapsed = false;
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = deviceRatio();
       let w = Math.round(entry.contentRect.width * dpr);
       let h = Math.round(entry.contentRect.height * dpr);
       // Exact device pixels when the browser reports them. Emulated DPRs can
@@ -325,7 +328,7 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
     }
 
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const stats: PondStats = { fps: 0, frameMs: 0, seed, gpu, software };
+    const stats: PondStats = { fps: 0, frameMs: 0, frames: 0, seed, gpu, software };
     let last = performance.now();
 
     const applySize = (r: Renderer) => {
@@ -348,6 +351,32 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       r.resize(bw, bh, (size.dpr * bw) / size.w);
     };
 
+    /** Applies a pending resize; false while there is nothing to draw into. */
+    const prepare = (): Renderer | null => {
+      if (!renderer || collapsed || failed || destroyed) return null;
+      // Moving to another monitor or zooming changes the ratio without always
+      // resizing the content box (and Safari has no device-pixel box at all).
+      if (deviceRatio() !== size.dpr) {
+        size = measure();
+        sizeDirty = true;
+      }
+      if (sizeDirty) {
+        sizeDirty = false;
+        applySize(renderer);
+      }
+      return renderer;
+    };
+
+    /** Simulates `dt` seconds and draws; shared by the frame loop and step(). */
+    const advance = (r: Renderer, dt: number) => {
+      pond.calm = reduceMotion.matches;
+      const step = dt * (pond.calm ? 0.75 : 1);
+      pond.update(step);
+      // The day runs on unscaled time: reduced motion slows the pond, not the sky.
+      r.render(pond, step, sky.update(dt));
+      stats.frames++;
+    };
+
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
       if (!renderer) return;
@@ -355,34 +384,35 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
         last = now;
         return;
       }
-      // Moving to another monitor or zooming changes the ratio without always
-      // resizing the content box (and Safari has no device-pixel box at all).
-      if ((window.devicePixelRatio || 1) !== size.dpr) {
-        size = measure();
-        sizeDirty = true;
-      }
       const hooks = slot.hooks;
       try {
-        if (sizeDirty) {
-          sizeDirty = false;
-          applySize(renderer);
-        }
+        const r = prepare();
+        if (!r) return;
         if (hooks.frame) hook(() => hooks.frame?.(now - last, now));
         const dt = Math.min((now - last) / 1000, 0.1);
         last = now;
-        pond.calm = reduceMotion.matches;
-        const step = dt * (pond.calm ? 0.75 : 1);
         const t0 = performance.now();
         if (hooks.begin) hook(() => hooks.begin?.());
-        pond.update(step);
-        // The day runs on unscaled time: reduced motion slows the pond, not the sky.
-        renderer.render(pond, step, sky.update(dt));
+        advance(r, dt);
         const cpuMs = performance.now() - t0;
         if (hooks.end) hook(() => hooks.end?.(cpuMs));
         stats.frameMs += (cpuMs - stats.frameMs) * 0.05;
         if (dt > 0) stats.fps += (1 / dt - stats.fps) * 0.05;
       } catch (err) {
         fail('renderer-failed', 'The koi pond renderer stopped working.', err);
+      }
+    };
+
+    /** Runs a manual draw like a frame: a throw fails the pond instead of escaping. */
+    const manual = (draw: (r: Renderer) => void): boolean => {
+      try {
+        const r = prepare();
+        if (!r) return false;
+        draw(r);
+        return true;
+      } catch (err) {
+        fail('renderer-failed', 'The koi pond renderer stopped working.', err);
+        return false;
       }
     };
     // (Re)starting never replays the pause as one long frame.
@@ -429,6 +459,16 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       stats,
       get renderer() {
         return renderer;
+      },
+      get canvas() {
+        return canvas;
+      },
+      step: (dt) => manual((r) => advance(r, dt)),
+      redraw: () => manual((r) => r.render(pond, 0, sky.phase)),
+      setDpr(dpr) {
+        dprOverride = dpr !== null && Number.isFinite(dpr) && dpr > 0 ? dpr : null;
+        size = measure();
+        sizeDirty = true;
       },
     };
     slot.core = core;
