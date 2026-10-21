@@ -1,0 +1,63 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #06131a;
+}
+
+#pond {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  touch-action: none;
+}
+
+#fallback {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 16px;
+  color: #7fb3bb;
+  font: 14px/1.4 'JetBrains Mono', ui-monospace, monospace;
+  text-align: center;
+  white-space: pre-wrap;
+}
+
+#fallback[hidden] {
+  display: none;
+}
+
+#perf {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  padding: 6px 8px;
+  background: rgba(3, 10, 14, 0.78);
+  border: 1px solid rgba(127, 179, 187, 0.25);
+  border-radius: 4px;
+  pointer-events: none;
+  user-select: none;
+}
+
+#perf[hidden] {
+  display: none;
+}
+
+#perf pre {
+  margin: 0 0 4px;
+  color: #b9dde2;
+  max-width: 240px;
+  font: 11px/1.35 'JetBrains Mono', ui-monospace, monospace;
+  white-space: pre-wrap;
+}
+
+#perf canvas {
+  display: block;
+  width: 240px;
+  height: 48px;
+}

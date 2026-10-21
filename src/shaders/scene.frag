@@ -1,0 +1,550 @@
+// Scene pass: one fragment per character cell. Decides what the cell shows
+// (water, ripple, trail, fin, body outline, body, eye), its colour and which
+// glyph draws it. The ASCII pass only copies that glyph from the atlas.
+// World space is CSS pixels with y pointing down; cell (0, 0) is top-left.
+
+uniform sampler2D uFish;
+uniform sampler2D uRipple;
+uniform ivec2 uRippleSize;
+uniform float uRipplePx;
+uniform int uFishCount;
+uniform int uOrder[MAX_FISH];
+uniform vec2 uCell;
+uniform vec2 uOriginCss; // world position of the grid's top-left corner
+uniform float uTime;
+uniform vec2 uShadow;
+
+layout(location = 0) out vec4 oColor; // rgb colour, a density (for the raw view)
+layout(location = 1) out vec4 oInfo;  // r glyph index, g cell class
+
+const vec3 WATER_DIM = vec3(0.10, 0.27, 0.31);
+const vec3 WATER_LIT = vec3(0.27, 0.58, 0.61);
+const vec3 RIPPLE_COL = vec3(0.66, 0.89, 0.90);
+const vec3 KOHAKU_WHITE = vec3(0.96, 0.94, 0.89);
+const vec3 HI_RED = vec3(0.95, 0.31, 0.17);
+const vec3 SUMI = vec3(0.30, 0.33, 0.40);
+const vec3 SHOWA_WHITE = vec3(0.93, 0.91, 0.86);
+const vec3 OGON_GOLD = vec3(0.97, 0.72, 0.24);
+const vec3 OGON_GLINT = vec3(1.0, 0.96, 0.80);
+const vec3 EYE_COL = vec3(1.0, 0.97, 0.86);
+// Light rim drawn over sumi so the Showa's black flank keeps its silhouette.
+const vec3 SUMI_RIM = vec3(0.74, 0.77, 0.82);
+
+// Ripple slope (height per px) that reads as a full-strength crest.
+const float RIPPLE_GAIN = 28.0;
+// Refraction offset (px) per unit of surface slope.
+const float REFRACT = 220.0;
+
+struct Cell {
+  vec3 col;
+  float dens;
+  int mat;
+  vec2 dir; // cell space: outward normal for edges, line direction otherwise
+  float aux;
+  float style;
+};
+
+struct Hit {
+  float d; // signed distance, px
+  float u; // 0..1 along the polyline
+  float v; // -1..1 across it
+  vec2 n;  // outward normal, world
+};
+
+vec4 F(int f, int i) { return texelFetch(uFish, ivec2(i, f), 0); }
+
+// Directions are converted to cell space so glyph slopes match on screen.
+vec2 lineDir(vec2 d) {
+  vec2 c = d / uCell;
+  float l = length(c);
+  return l > 1e-6 ? c / l : vec2(1.0, 0.0);
+}
+
+vec2 cellNormal(vec2 n) {
+  vec2 c = n * uCell;
+  float l = length(c);
+  return l > 1e-6 ? c / l : vec2(1.0, 0.0);
+}
+
+// Fraction of the cell covered, estimated from the distance along the normal.
+float coverage(float d, vec2 n) {
+  float span = abs(n.x) * uCell.x + abs(n.y) * uCell.y;
+  return clamp(0.5 - d / span, 0.0, 1.0);
+}
+
+// ---------------------------------------------------------------- glyphs
+
+const int BODY_N = 6;
+const int BODY_RAMP[BODY_N] = int[BODY_N](G_EQUALS, G_PLUS, G_STAR, G_HASH, G_PERCENT, G_AT);
+
+float bayer4(ivec2 c) {
+  const int B[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
+  return (float(B[(c.x & 3) + (c.y & 3) * 4]) + 0.5) / 16.0;
+}
+
+// Sign-free line direction (y down) → horizontal, '\', vertical or '/'.
+int lineGlyph(vec2 d, int horizontal, int vertical) {
+  float a = atan(d.y, d.x);
+  if (a < 0.0) a += PI;
+  int s = int(floor(a / (PI * 0.25) + 0.5)) % 4;
+  if (s == 0) return horizontal;
+  if (s == 1) return G_BSLASH;
+  if (s == 2) return vertical;
+  return G_SLASH;
+}
+
+// Outward normal (y down) of a silhouette → outline glyph. `cov` says whether
+// the boundary sits in the upper or lower half of the cell.
+int edgeGlyph(vec2 n, float cov) {
+  int o = int(floor((atan(n.y, n.x) + TAU) / (PI * 0.25) + 0.5)) % 8;
+  if (o == 0) return G_RPAREN;
+  if (o == 4) return G_LPAREN;
+  if (o == 1 || o == 5) return G_SLASH;
+  if (o == 3 || o == 7) return G_BSLASH;
+  if (o == 2) return cov > 0.5 ? G_UNDERSCORE : G_MINUS; // bottom edge
+  return cov > 0.5 ? G_MINUS : G_UNDERSCORE;             // top edge
+}
+
+bool inBox(vec2 p, vec4 box, float pad) {
+  return all(greaterThanEqual(p, box.xy - pad)) && all(lessThanEqual(p, box.zw + pad));
+}
+
+// ---------------------------------------------------------------- ripples
+
+float rippleTexel(ivec2 c) {
+  c = clamp(c, ivec2(0), uRippleSize - 1);
+#ifdef RIPPLE_PACKED
+  return dec16(texelFetch(uRipple, c, 0).rg);
+#else
+  return texelFetch(uRipple, c, 0).r;
+#endif
+}
+
+float rippleAt(vec2 p) {
+  vec2 t = p / uRipplePx - 0.5;
+  vec2 i = floor(t);
+  vec2 f = t - i;
+  ivec2 c = ivec2(i);
+  return mix(mix(rippleTexel(c), rippleTexel(c + ivec2(1, 0)), f.x),
+             mix(rippleTexel(c + ivec2(0, 1)), rippleTexel(c + ivec2(1, 1)), f.x), f.y);
+}
+
+// ---------------------------------------------------------------- water
+
+// Voronoi edge network, animated: bright where two cells meet.
+float caustic(vec2 x, float t) {
+  vec2 i = floor(x);
+  vec2 f = fract(x);
+  float f1 = 8.0;
+  float f2 = 8.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int k = -1; k <= 1; k++) {
+      vec2 b = vec2(float(k), float(y));
+      vec2 o = 0.5 + 0.42 * sin(t + TAU * hash22(i + b));
+      float d = length(b + o - f);
+      if (d < f1) {
+        f2 = f1;
+        f1 = d;
+      } else if (d < f2) {
+        f2 = d;
+      }
+    }
+  }
+  return 1.0 - smoothstep(0.0, 0.22, f2 - f1);
+}
+
+Cell water(vec2 p, float h, vec2 g) {
+  Cell c;
+  // Motes drifting with a slow current.
+  vec2 mp = floor((p + vec2(7.0, -4.0) * uTime) / uCell);
+  float mote = step(0.96, hash12(mp)) * (0.4 + 0.6 * hash12(mp + 17.0));
+  // Caustic light on the pond floor, bent a little by the surface. fbm spans
+  // only about ±0.3 across a screen, so shimmer stays within ~[0.62, 0.98];
+  // the smoothstep's low edge must stay below that range's top.
+  float shimmer = 0.8 + 0.6 * fbm(p * 0.0016 + vec2(uTime * 0.012, -uTime * 0.008));
+  float lit = smoothstep(0.45, 0.95, caustic(p * 0.011 + g * 3.0, uTime * 0.45) * shimmer);
+  c.mat = M_WATER;
+  c.dens = max(mote * 0.5, lit);
+  // Kept dimmer than ripples and trails, which share the light glyphs.
+  c.col = mix(WATER_DIM, WATER_LIT, 0.6 * lit);
+  c.aux = hash12(mp + 3.1);
+  c.dir = vec2(1.0, 0.0);
+  c.style = 0.0;
+
+  float rip = smoothstep(0.15, 0.6, length(g) * RIPPLE_GAIN);
+  if (rip > 0.25) {
+    c.mat = M_RIPPLE;
+    c.dens = rip;
+    c.col = mix(WATER_LIT, RIPPLE_COL, rip);
+    c.dir = lineDir(vec2(-g.y, g.x)); // along the crest
+    c.aux = h > 0.0 ? 1.0 : 0.0;
+  }
+  return c;
+}
+
+// ---------------------------------------------------------------- fish geometry
+
+// Closest point on the joint polyline [i0, i0 + count] with linearly
+// interpolated radius: a chain of tapered capsules.
+Hit polyline(int f, int i0, int count, vec2 p) {
+  Hit h;
+  h.d = 1e9;
+  h.u = 0.0;
+  h.v = 0.0;
+  h.n = vec2(1.0, 0.0);
+  vec4 A = F(f, i0);
+  for (int k = 0; k < count; k++) {
+    vec4 B = F(f, i0 + k + 1);
+    vec2 ab = B.xy - A.xy;
+    vec2 ap = p - A.xy;
+    float t = clamp(dot(ap, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+    vec2 dq = ap - ab * t;
+    float dist = length(dq);
+    float r = mix(A.z, B.z, t);
+    float d = dist - r;
+    if (d < h.d) {
+      h.d = d;
+      h.u = (float(k) + t) / float(count);
+      float side = ab.x * ap.y - ab.y * ap.x < 0.0 ? -1.0 : 1.0;
+      h.v = side * dist / max(r, 1e-3);
+      h.n = dist > 1e-4 ? dq / dist : normalize(vec2(-ab.y, ab.x) + 1e-6);
+    }
+    A = B;
+  }
+  return h;
+}
+
+// Pectoral fin: a blade that widens from the root and rounds off at the tip.
+float finDist(vec2 p, vec2 a, vec2 b, float r0, float r1, out float t) {
+  vec2 ab = b - a;
+  vec2 ap = p - a;
+  t = clamp(dot(ap, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+  float r = mix(r0, r1, smoothstep(0.0, 0.5, t)) * (1.0 - 0.45 * smoothstep(0.55, 1.0, t));
+  return length(ap - ab * t) - r;
+}
+
+// Caudal fin: the tail polyline with a forked notch cut into its end and the
+// tip capped flat, so the rim is a closed outline.
+float tailSD(int f, vec2 q, vec4 fin) {
+  Hit th = polyline(f, J_BODY - 1, J_TAIL, q);
+  vec2 tip = F(f, J_TOTAL - 1).xy;
+  vec2 tdir = normalize(tip - F(f, J_TOTAL - 2).xy + 1e-6);
+  return max(max(th.d, (th.u - 1.0 + fin.w * (1.0 - min(abs(th.v), 1.0))) * fin.z), dot(q - tip, tdir));
+}
+
+// ---------------------------------------------------------------- markings
+
+float sq(float x) { return x * x; }
+
+// Kohaku: porcelain white with large hi (red) patches over the back, a red
+// head patch, clean white nose and tail root.
+vec3 kohaku(float u, float v, float seed) {
+  float n = fbm(vec2(u * 3.0, v * 0.8) + seed)
+          + 0.08
+          + 0.35 * exp(-sq((u - 0.14) / 0.08))
+          - 0.45 * v * v
+          - 0.7 * smoothstep(0.75, 0.92, u)
+          - 0.8 * (1.0 - smoothstep(0.02, 0.07, u));
+  return mix(KOHAKU_WHITE, HI_RED, smoothstep(-0.02, 0.04, n));
+}
+
+// Showa: sumi (black) bands wrapping the body, big red patches, some white.
+vec3 showa(float u, float v, float seed, out float sumiAmt) {
+  float s = fbm(vec2(u * 3.5 + v * 0.9, v * 1.4) + seed * 1.7) + 0.04;
+  float r = fbm(vec2(u * 2.6, v * 0.9) + seed * 2.3 + 31.0)
+          + 0.06 - 0.3 * v * v + 0.2 * exp(-sq((u - 0.12) / 0.1));
+  float sumi = smoothstep(0.0, 0.04, s);
+  float hi = smoothstep(0.0, 0.04, r);
+  sumiAmt = sumi * (1.0 - 0.5 * hi);
+  return mix(mix(SHOWA_WHITE, HI_RED, hi), SUMI, sumiAmt);
+}
+
+// Ogon: metallic gold; individual scales catch the light and a soft
+// highlight band rolls along the flank.
+vec3 ogon(float u, float v, float seed, out float glint) {
+  vec2 sc = vec2(u * 26.0, v * 4.0 + 4.0);
+  vec2 id = floor(vec2(sc.x + 0.5 * mod(floor(sc.y), 2.0), sc.y));
+  float ph = hash12(id + seed);
+  float twinkle = pow(0.5 + 0.5 * sin(uTime * 2.3 + ph * TAU + u * 7.0), 14.0) * step(0.55, ph);
+  float band = exp(-sq((v - 0.35 * sin(uTime * 0.6 + u * 4.0 + seed)) * 2.2));
+  glint = max(twinkle, band * 0.6);
+  vec3 base = mix(OGON_GOLD * vec3(0.86, 0.8, 0.72), OGON_GOLD, 1.0 - abs(v));
+  return mix(base, OGON_GLINT, glint);
+}
+
+vec3 pectoralColor(int variety, float t) {
+  if (variety == V_KOHAKU) return vec3(0.82, 0.90, 0.92);
+  if (variety == V_SHOWA) return mix(SUMI, SHOWA_WHITE, smoothstep(0.15, 0.45, t)); // motoguro
+  return vec3(0.98, 0.84, 0.48);
+}
+
+vec3 tailColor(int variety, float u, float v, float seed) {
+  if (variety == V_KOHAKU) return vec3(0.84, 0.91, 0.93);
+  if (variety == V_SHOWA) {
+    float streak = smoothstep(0.1, 0.2, gnoise(vec2(v * 3.0, u * 1.5) + seed));
+    return mix(SHOWA_WHITE, SUMI, streak * (1.0 - u * 0.6));
+  }
+  return mix(OGON_GOLD, vec3(1.0, 0.9, 0.62), u);
+}
+
+// ---------------------------------------------------------------- composition
+
+float shadow(int f, vec2 p) {
+  float lift = 1.25 - F(f, T_P0).w;
+  vec2 q = p - uShadow * lift;
+  float blur = max(uCell.x, uCell.y) * (0.5 + 1.5 * lift);
+  if (!inBox(q, F(f, T_BBOX), blur)) return 0.0;
+  float d = min(polyline(f, 0, J_BODY - 1, q).d,
+                polyline(f, J_BODY - 1, J_TAIL, q).d + max(uCell.x, uCell.y) * 0.5);
+  return (1.0 - smoothstep(-blur, blur, d)) * (0.95 - 0.35 * lift);
+}
+
+void trails(vec2 p, inout Cell c) {
+  float best = 0.0;
+  vec2 bestDir = vec2(1.0, 0.0);
+  int bestVariety = 0;
+  for (int f = 0; f < MAX_FISH; f++) {
+    if (f >= uFishCount) break;
+    vec4 P1 = F(f, T_P1);
+    int n = int(P1.x + 0.5);
+    float w0 = P1.y;
+    if (n < 2 || !inBox(p, F(f, T_TBOX), w0 * 2.5 + uCell.y)) continue;
+    int variety = int(F(f, T_P0).x + 0.5);
+    vec4 A = F(f, T_TRAIL);
+    for (int k = 1; k < TRAIL_N; k++) {
+      if (k >= n) break;
+      vec4 B = F(f, T_TRAIL + k);
+      vec2 ab = B.xy - A.xy;
+      vec2 ap = p - A.xy;
+      float t = clamp(dot(ap, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+      float dist = length(ap - ab * t);
+      float age = mix(A.z, B.z, t);
+      float w = w0 * (0.5 + 1.4 * age) + 0.3 * min(uCell.x, uCell.y);
+      float I = pow(1.0 - age, 1.3) * (1.0 - smoothstep(w * 0.35, w, dist));
+      if (I > best) {
+        best = I;
+        bestDir = ab;
+        bestVariety = variety;
+      }
+      A = B;
+    }
+  }
+  if (best < 0.05) return;
+
+  vec2 cell = floor(p / uCell);
+  vec3 col;
+  if (bestVariety == V_KOHAKU) {
+    // Silk: a smooth warm-white ribbon that frays as it fades.
+    best *= 0.7 + 0.6 * gnoise(p * 0.035 - uTime * 0.5);
+    col = vec3(0.95, 0.86, 0.80);
+  } else if (bestVariety == V_SHOWA) {
+    // Bubbles: sparse dots that stay put while the trail fades.
+    float hb = hash12(cell * 1.37 + 5.0);
+    best *= step(0.62, hb) * (0.7 + 0.6 * hb);
+    col = vec3(0.82, 0.93, 0.95);
+  } else {
+    // Gold dust that twinkles.
+    float tw = hash12(cell + floor(uTime * 7.0) * 0.731);
+    best *= step(0.5, tw) * 1.2;
+    col = vec3(1.0, 0.85, 0.45);
+  }
+  if (best < 0.12) return;
+  c.mat = M_TRAIL;
+  c.dens = min(best, 1.0);
+  // Silk keeps its warm hue and only dims as it fades; the others fade into the water.
+  c.col = bestVariety == V_KOHAKU ? col * (0.6 + 0.4 * smoothstep(0.1, 0.6, best)) : mix(WATER_LIT, col, smoothstep(0.1, 0.6, best));
+  c.dir = lineDir(bestDir);
+  c.aux = 0.0;
+  c.style = float(bestVariety);
+}
+
+// Surface refraction at one point, as main() takes it per cell.
+vec2 refrAt(vec2 x) {
+  float e = uRipplePx;
+  return vec2(rippleAt(x + vec2(e, 0.0)) - rippleAt(x - vec2(e, 0.0)),
+              rippleAt(x + vec2(0.0, e)) - rippleAt(x - vec2(0.0, e))) / (2.0 * e) * REFRACT;
+}
+
+void drawFish(int f, vec2 p, vec2 refr, inout Cell c) {
+  vec4 P0 = F(f, T_P0);
+  int variety = int(P0.x + 0.5);
+  float seed = P0.y;
+  float depth = P0.w;
+  // Deeper fish are displaced more by the moving surface.
+  vec2 q = p + refr * (0.5 + depth);
+  if (!inBox(q, F(f, T_BBOX), max(uCell.x, uCell.y) * 1.5)) return;
+  float fog = 0.55 * depth;
+  float fade = 1.0 - 0.3 * depth;
+  float style = float(variety);
+  vec4 fin = F(f, T_FIN);
+
+  // Fin normals come from a numeric gradient over half a cell, so outline
+  // glyphs follow the fin's actual rim (fork and tip included).
+  float reach = max(uCell.x, uCell.y);
+  vec2 ex = vec2(uCell.x * 0.5, 0.0);
+  vec2 ey = vec2(0.0, uCell.y * 0.5);
+
+  // Pectoral fins sit beneath the body: outline on the rim, rays inside.
+  for (int s = 0; s < 2; s++) {
+    vec4 pf = F(f, T_PEC_L + s);
+    float t, t2;
+    float d = finDist(q, pf.xy, pf.zw, fin.x, fin.y, t);
+    if (d > reach) continue;
+    vec2 gr = vec2(finDist(q + ex, pf.xy, pf.zw, fin.x, fin.y, t2) - finDist(q - ex, pf.xy, pf.zw, fin.x, fin.y, t2),
+                   finDist(q + ey, pf.xy, pf.zw, fin.x, fin.y, t2) - finDist(q - ey, pf.xy, pf.zw, fin.x, fin.y, t2)) / uCell;
+    vec2 n = normalize(gr + 1e-6);
+    float cv = coverage(d, n);
+    if (cv > 0.25) {
+      c.col = mix(pectoralColor(variety, t), WATER_DIM, fog);
+      c.aux = 0.0;
+      c.style = style;
+      if (cv < 0.8) {
+        c.mat = M_EDGE;
+        c.dens = cv;
+        c.dir = cellNormal(n);
+      } else {
+        c.mat = M_FIN;
+        c.col *= 0.75;
+        c.dens = 0.6 * fade;
+        c.dir = lineDir(q - pf.xy);
+      }
+    }
+  }
+
+  // Caudal fin with a forked notch: outline on the rim, rays fanning out from
+  // the peduncle inside.
+  float td = tailSD(f, q, fin);
+  if (td < reach) {
+    vec2 gr = vec2(tailSD(f, q + ex, fin) - tailSD(f, q - ex, fin),
+                   tailSD(f, q + ey, fin) - tailSD(f, q - ey, fin)) / uCell;
+    vec2 n = normalize(gr + 1e-6);
+    float tcv = coverage(td, n);
+    if (tcv > 0.25) {
+      Hit th = polyline(f, J_BODY - 1, J_TAIL, q);
+      c.col = mix(tailColor(variety, th.u, th.v, seed), WATER_DIM, fog);
+      c.aux = 0.0;
+      c.style = style;
+      if (tcv < 0.8) {
+        c.mat = M_EDGE;
+        c.dens = tcv;
+        c.dir = cellNormal(n);
+      } else {
+        c.mat = M_FIN;
+        c.col *= 0.75;
+        c.dens = (0.65 - 0.2 * th.u) * fade;
+        c.dir = lineDir(q - F(f, J_BODY - 1).xy);
+      }
+    }
+  }
+
+  // Body: dense fill inside, outline glyphs along the silhouette.
+  Hit bh = polyline(f, 0, J_BODY - 1, q);
+  float bcv = coverage(bh.d, bh.n);
+  if (bcv > 0.18) {
+    float glint = 0.0;
+    float sumiAmt = 0.0;
+    vec3 bc = variety == V_KOHAKU ? kohaku(bh.u, bh.v, seed)
+            : variety == V_SHOWA ? showa(bh.u, bh.v, seed, sumiAmt)
+            : ogon(bh.u, bh.v, seed, glint);
+    float shade = 1.0 - 0.45 * bh.v * bh.v;
+    c.col = mix(bc * (0.8 + 0.2 * shade), WATER_DIM, fog);
+    c.style = style;
+    if (bcv > 0.8) {
+      // Glyph weight follows perceived lightness, so markings read as texture
+      // and not only as colour: white scales are heavier than sumi.
+      float Yl = dot(bc * bc, vec3(0.2126, 0.7152, 0.0722));
+      float Ls = 1.16 * pow(Yl, 1.0 / 3.0) - 0.16;
+      c.mat = M_BODY;
+      c.dens = mix(0.6, 1.0, Ls) * shade * fade;
+      c.aux = glint;
+    } else {
+      c.mat = M_EDGE;
+      c.dens = bcv;
+      c.dir = cellNormal(bh.n);
+      c.aux = 0.0;
+      c.col = mix(c.col, mix(SUMI_RIM, WATER_DIM, fog), 0.65 * sumiAmt);
+    }
+  }
+
+  // Eyes: always claim the cell nearest their centre so they never vanish.
+  vec4 E = F(f, T_EYE);
+  for (int s = 0; s < 2; s++) {
+    vec2 e = s == 0 ? E.xy : E.zw;
+    // Refraction taken at the eye, not per cell: adjacent cells refract by different
+    // amounts, so per-cell offsets can leave the eye with no cell (or two).
+    vec2 de = abs(p + refrAt(e) * (0.5 + depth) - e);
+    if (length(q - e) < P0.z || (de.x < uCell.x * 0.5 && de.y < uCell.y * 0.5)) {
+      c.mat = M_EYE;
+      c.col = mix(EYE_COL, WATER_DIM, fog * 0.5);
+      c.dens = 1.0;
+      c.aux = 0.0;
+      c.style = style;
+    }
+  }
+}
+
+int pickGlyph(Cell c, ivec2 cell) {
+  float dens = clamp(c.dens, 0.0, 1.0);
+  float aux = clamp(c.aux, 0.0, 1.0);
+  int style = int(c.style + 0.5);
+  if (c.mat == M_WATER) {
+    if (dens < 0.12) return G_SPACE;
+    if (dens < 0.6) return aux < 0.4 ? G_DOT : aux < 0.65 ? G_COMMA : aux < 0.85 ? G_BACKTICK : G_QUOTE;
+    return G_COLON;
+  }
+  if (c.mat == M_RIPPLE) {
+    if (dens < 0.45) return G_DOT;
+    return lineGlyph(c.dir, aux > 0.5 ? G_TILDE : G_MINUS, G_PIPE);
+  }
+  if (c.mat == M_TRAIL) {
+    if (style == V_SHOWA) return dens > 0.55 ? G_O : G_DOT;
+    if (style == V_OGON) return dens > 0.65 ? G_STAR : dens > 0.35 ? G_QUOTE : G_DOT;
+    if (dens < 0.3) return G_DOT;
+    if (dens < 0.55) return G_MINUS;
+    return lineGlyph(c.dir, G_TILDE, G_COLON);
+  }
+  if (c.mat == M_FIN) {
+    if (dens < 0.3) return G_DOT;
+    if (dens < 0.45) return G_QUOTE;
+    return lineGlyph(c.dir, style == V_OGON ? G_TILDE : G_MINUS, G_PIPE);
+  }
+  if (c.mat == M_EDGE) return edgeGlyph(c.dir, dens);
+  if (c.mat == M_BODY) {
+    if (aux > 0.75) return G_STAR;
+    float x = smoothstep(0.3, 0.95, dens) * float(BODY_N - 1) + (bayer4(cell) - 0.5) * 0.5;
+    return BODY_RAMP[clamp(int(floor(x + 0.5)), 0, BODY_N - 1)];
+  }
+  if (c.mat == M_EYE) return G_O;
+  return G_SPACE;
+}
+
+void main() {
+  vec2 p = (floor(gl_FragCoord.xy) + 0.5) * uCell + uOriginCss;
+
+  float e = uRipplePx;
+  float h = rippleAt(p);
+  vec2 g = vec2(rippleAt(p + vec2(e, 0.0)) - rippleAt(p - vec2(e, 0.0)),
+                rippleAt(p + vec2(0.0, e)) - rippleAt(p - vec2(0.0, e))) / (2.0 * e);
+
+  Cell c = water(p, h, g);
+
+  float sh = 0.0;
+  for (int f = 0; f < MAX_FISH; f++) {
+    if (f >= uFishCount) break;
+    sh = max(sh, shadow(f, p));
+  }
+  c.dens *= clamp(1.0 - 1.4 * sh, 0.0, 1.0);
+  c.col *= 1.0 - 0.5 * sh;
+
+  trails(p, c);
+
+  vec2 refr = g * REFRACT;
+  for (int k = 0; k < MAX_FISH; k++) {
+    if (k >= uFishCount) break;
+    drawFish(uOrder[k], p, refr, c);
+  }
+
+  int glyph = pickGlyph(c, ivec2(gl_FragCoord.xy));
+  oColor = vec4(c.col, clamp(c.dens, 0.0, 1.0));
+  oInfo = vec4(float(glyph) / 255.0, float(c.mat) / 255.0, 0.0, 0.0);
+}
