@@ -8,7 +8,9 @@
 # dist-tag as a GitHub prerelease and leave the demo alone.
 #
 # npm needs koi-ascii's trusted publisher set to this repo and release.yml
-# (npmjs.com → package settings → Trusted publishing).
+# with direct `npm publish` allowed and no environment (npmjs.com → package
+# settings → Trusted publishing). Staged publishing would leave the tag,
+# Release and demo ahead of a version npm doesn't serve until approved.
 name: Release
 
 on:
