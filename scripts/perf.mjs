@@ -115,6 +115,19 @@ async function measureAll(baseDir) {
       }
     }
 
+    /** measure(), retried while some timer results never came back (a busy GPU): a partial run would skew the medians. */
+    async function measureComplete(side, url) {
+      for (let attempt = 1; ; attempt++) {
+        const r = await measure(side, url);
+        const short = Object.entries(r.passes).filter(([, t]) => t.n < frames);
+        if (!short.length) return r;
+        if (attempt === 3) {
+          const missing = short.map(([pass, t]) => `${pass} ${t.n}/${frames}`).join(', ');
+          throw new Error(`${side}: timer results still missing after 3 tries (${missing}); is the GPU busy?`);
+        }
+      }
+    }
+
     for (const query of queries) {
       const q = { query, urls: {}, cells: null, canvas: null, disjointRuns: 0, cpuMs: {}, passes: {} };
       report.queries.push(q);
@@ -124,7 +137,7 @@ async function measureAll(baseDir) {
         // Alternate which side goes first, so a clock ramping up favours neither.
         for (const side of i % 2 ? [...sides].reverse() : sides) {
           if (process.stderr.isTTY) process.stderr.write(`\r\x1b[K${query}  run ${i + 1}/${runs} ${side}`);
-          const r = await measure(side, q.urls[side]);
+          const r = await measureComplete(side, q.urls[side]);
           results[side].push(r);
           q.cells = r.cells;
           q.canvas = { width: r.width, height: r.height };
@@ -139,10 +152,12 @@ async function measureAll(baseDir) {
       for (const name of names) {
         const entry = {};
         for (const side of sides) {
-          const medians = results[side].map((r) => r.passes[name]?.median ?? 0);
-          entry[side] = { median: r2(median(medians)), spread: r2(Math.max(...medians) - Math.min(...medians)), runs: medians };
+          // Every run of a side draws the same frame, so a pass is in all of its runs or none (a pass only one side has).
+          const medians = results[side].flatMap((r) => (r.passes[name] ? [r.passes[name].median] : []));
+          if (medians.length && medians.length < results[side].length) throw new Error(`${side}: pass ${name} is missing from some runs`);
+          entry[side] = medians.length ? { median: r2(median(medians)), spread: r2(Math.max(...medians) - Math.min(...medians)), runs: medians } : null;
         }
-        if (entry.base) {
+        if (entry.base && entry.head) {
           entry.deltaUs = r2(entry.head.median - entry.base.median);
           entry.deltaPct = entry.base.median ? r2((entry.deltaUs / entry.base.median) * 100) : null;
         }
@@ -166,10 +181,11 @@ function table(q) {
   if (q.disjointRuns) head.push(`warning: ${q.disjointRuns} run(s) hit a GPU disjoint event; their times may be off`);
   const cols = base ? ['pass', 'base', '±', 'head', '±', 'Δ µs', 'Δ %'] : ['pass', 'median', '±'];
   const sign = (v) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2));
+  // A pass only one side draws shows — on the other.
+  const us = (t) => (t ? [t.median.toFixed(2), t.spread.toFixed(2)] : ['—', '']);
+  const pct = (p) => (p.deltaPct == null ? '—' : `${p.deltaPct > 0 ? '+' : ''}${p.deltaPct.toFixed(1)}%`);
   const rows = Object.entries(q.passes).map(([name, p]) =>
-    base
-      ? [name, p.base.median.toFixed(2), p.base.spread.toFixed(2), p.head.median.toFixed(2), p.head.spread.toFixed(2), sign(p.deltaUs), p.deltaPct === null ? '—' : `${p.deltaPct > 0 ? '+' : ''}${p.deltaPct.toFixed(1)}%`]
-      : [name, p.head.median.toFixed(2), p.head.spread.toFixed(2)],
+    base ? [name, ...us(p.base), ...us(p.head), p.deltaUs === undefined ? '—' : sign(p.deltaUs), pct(p)] : [name, ...us(p.head)],
   );
   rows.push(base ? ['cpu ms', String(q.cpuMs.base), '', String(q.cpuMs.head), '', '', ''] : ['cpu ms', String(q.cpuMs.head), '']);
   const w = cols.map((c, i) => Math.max(c.length, ...rows.map((r) => r[i].length)));
