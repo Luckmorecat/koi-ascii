@@ -6,6 +6,10 @@ name: Pages
 
 on:
   workflow_call:
+    inputs:
+      version:
+        description: Deploy only while no newer version is npm's latest.
+        type: string
   workflow_dispatch:
 
 permissions:
@@ -41,5 +45,21 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Checked here, not in release.yml: "Re-run failed jobs" reuses the
+      # release job's decision, which a newer release may have outdated.
+      - id: fresh
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        # Both are plain x.y.z (only releases deploy), so sort -V orders them.
+        # A just-published version may not be npm's latest yet; newer counts.
+        run: |
+          latest=$(npm view koi-ascii dist-tags.latest)
+          if [ "$(printf '%s\n' "$latest" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
+            echo "fresh=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Not deploying $VERSION: npm's latest is now $latest."
+          fi
       - id: deployment
+        if: inputs.version == '' || steps.fresh.outputs.fresh == 'true'
         uses: actions/deploy-pages@v4

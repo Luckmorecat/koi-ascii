@@ -72,6 +72,8 @@ export interface ReleasePlan {
   release: boolean;
   /** The dist-tag to publish under: its channel, or `previous` when the channel already has a newer version. */
   distTag: string;
+  /** Whether the GitHub Release is a prerelease, whatever the dist-tag. */
+  prerelease: boolean;
   /** Whether the GitHub Release is marked latest. */
   latest: boolean;
   deploy: boolean;
@@ -86,7 +88,8 @@ export interface ReleasePlan {
  * doesn't.
  */
 export function releasePlan(facts: ReleaseFacts): ReleasePlan {
-  const channel = facts.version.includes('-') ? 'next' : 'latest';
+  const prerelease = facts.version.includes('-');
+  const channel = prerelease ? 'next' : 'latest';
   const head = facts.distTags[channel];
   const current = head === undefined || compareVersions(facts.version, head) >= 0;
   return {
@@ -94,6 +97,7 @@ export function releasePlan(facts: ReleaseFacts): ReleasePlan {
     tag: facts.tagSha === null,
     release: !facts.hasRelease,
     distTag: current ? channel : 'previous',
+    prerelease,
     latest: current && channel === 'latest',
     deploy: current && channel === 'latest' && (facts.tagSha ?? facts.sha) === facts.sha,
   };

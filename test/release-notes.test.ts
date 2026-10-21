@@ -67,7 +67,7 @@ describe('releasePlan', () => {
   };
 
   it('does every step for a new version, under latest, and deploys', () => {
-    expect(releasePlan(fresh)).toEqual({ publish: true, tag: true, release: true, distTag: 'latest', latest: true, deploy: true });
+    expect(releasePlan(fresh)).toEqual({ publish: true, tag: true, release: true, distTag: 'latest', prerelease: false, latest: true, deploy: true });
   });
 
   it('redeploys on a full re-run once everything else is done', () => {
@@ -82,12 +82,12 @@ describe('releasePlan', () => {
 
   it('completes an older version without moving latest or the demo back', () => {
     const retry = { ...fresh, distTags: { latest: '0.4.0' } };
-    expect(releasePlan(retry)).toEqual({ publish: true, tag: true, release: true, distTag: 'previous', latest: false, deploy: false });
+    expect(releasePlan(retry)).toEqual({ publish: true, tag: true, release: true, distTag: 'previous', prerelease: false, latest: false, deploy: false });
   });
 
   it('sends a prerelease to next and leaves the demo and latest alone', () => {
     const beta = { ...fresh, version: '0.4.0-beta.1', distTags: { latest: '0.3.1', next: '0.4.0-beta.0' } };
-    expect(releasePlan(beta)).toMatchObject({ distTag: 'next', latest: false, deploy: false });
-    expect(releasePlan({ ...beta, distTags: { next: '0.4.0-beta.2' } }).distTag).toBe('previous');
+    expect(releasePlan(beta)).toMatchObject({ distTag: 'next', prerelease: true, latest: false, deploy: false });
+    expect(releasePlan({ ...beta, distTags: { next: '0.4.0-beta.2' } })).toMatchObject({ distTag: 'previous', prerelease: true });
   });
 });
