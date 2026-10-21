@@ -206,22 +206,25 @@ test('a resume during a profile waits for it, and a collapsed pond fails the pro
   const r = await page.evaluate(async () => {
     const koi = window.koi!;
     await koi.call('pause');
-    const profile = koi.call('profile', { frames: 200 });
+    // Loop frames while the profile runs and after it; a fast GPU finishes 200 redraws in ~35 ms,
+    // so a fixed wait can't tell "during" from "after".
+    const loopFrames = { during: 0, after: 0 };
+    let profiling = true;
+    koi.on('frame', (e) => {
+      if (!e.stepped) loopFrames[profiling ? 'during' : 'after']++;
+    });
+    const profile = koi.call('profile', { frames: 200 }).finally(() => (profiling = false));
     await koi.call('resume');
-    const before = ((await koi.call('getState')) as { ok: true; result: { frame: number } }).result.frame;
-    await new Promise((ok) => setTimeout(ok, 50));
-    const during = ((await koi.call('getState')) as { ok: true; result: { frame: number } }).result.frame;
     const done = await profile;
     await new Promise((ok) => setTimeout(ok, 300));
-    const after = ((await koi.call('getState')) as { ok: true; result: { frame: number } }).result.frame;
     await koi.call('setViewport', { width: 16, height: 16 });
     document.querySelector<HTMLElement>('#pond')!.style.display = 'none';
     const collapsed = await koi.call('profile', { frames: 10 });
-    return { held: during === before, done, resumed: after > during, collapsed };
+    return { loopFrames, done, collapsed };
   });
-  expect(r.held).toBe(true);
-  if (r.done.ok) expect(r.done.result).toHaveProperty('gpuTimer');
-  expect(r.resumed).toBe(true);
+  expect(r.loopFrames.during).toBe(0);
+  expect(r.done).toMatchObject({ ok: true, result: { gpuTimer: expect.any(Boolean) } });
+  expect(r.loopFrames.after).toBeGreaterThan(0);
   expect(r.collapsed).toMatchObject({ ok: false, error: { code: 'not-ready' } });
 });
 
