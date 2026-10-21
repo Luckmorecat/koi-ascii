@@ -51,6 +51,7 @@ const pond = createKoiPond(container, {
   fontFamily: '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace',
   palette: 'pond', // a preset name or a palette object; see "Palettes"
   intensity: 1, // 0 background only … 1 full pond; see "Intensity"
+  sky: { moon: true }, // night-sky features; see "Night sky"
   background: '#06131a', // CSS colour before the first frame and on failure
   onError: (error) => console.warn(error.code),
 });
@@ -64,10 +65,11 @@ const pond = createKoiPond(container, {
 | `fontFamily`  | `'"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace'` | The glyph font. See "Fonts".                       |
 | `palette`     | `'pond'`                                                      | Can change later with `setPalette`. See "Palettes". |
 | `intensity`   | `1`                                                           | Can change later with `setIntensity`. See "Intensity". |
+| `sky`         | stars, fireflies and `darkNight` on; moon and sun off         | Can change later with `setSky`. See "Night sky".   |
 | `background`  | the palette's background                                      | Shown until the first frame and if the pond fails. |
 | `onError`     | logs to the console                                           | See "Failure".                                     |
 
-The time, palette and intensity can change after creation. For anything else,
+The time, palette, intensity and sky can change after creation. For anything else,
 `destroy()` the pond and create a new one.
 
 Without `background`, the container shows the palette's background (and
@@ -82,6 +84,7 @@ always drawn on the palette's background.
 | `setTime(time)` | Switches the time of day live. `{ mode: 'loop' }` without a phase carries on from the current one. |
 | `setPalette(palette)` | Recolours the pond from the next frame on; the fish carry on. |
 | `setIntensity(intensity)` | Fades the pond towards its background from the next frame on. Animate it for a fade. |
+| `setSky(sky)`   | Turns night-sky features on or off from the next frame on, with the same values as the `sky` option; the fish carry on. |
 | `pause()`       | Stops simulating and drawing. The last frame stays on screen.                                    |
 | `resume()`      | Carries on from where it paused, without jumping ahead.                                          |
 | `destroy()`     | Stops the pond, removes its canvas, listeners and observers and frees its WebGL context. Safe to call twice, and safe before the pond has started. |
@@ -89,8 +92,8 @@ always drawn on the palette's background.
 Exported types: `KoiPond`, `KoiPondOptions`, `KoiPondTime`,
 `KoiPondInteractive`, `KoiPondError`, `KoiPondErrorCode`, `KoiPondPalette`,
 `KoiPondPaletteName`, `KoiPondRampPalette`, `KoiPondRolesPalette`,
-`KoiPondFilterPalette`, `KoiPondColor`. Exported value besides
-`createKoiPond`: `koiPalettes`.
+`KoiPondFilterPalette`, `KoiPondColor`, `KoiPondSky`, `KoiPondSkyFeatures`.
+Exported value besides `createKoiPond`: `koiPalettes`.
 
 ## Time of day
 
@@ -110,6 +113,34 @@ Invalid values fall back to the defaults instead of throwing: a cycle outside
 pond.setTime({ mode: 'fixed', phase: 0.5 }); // noon
 pond.setTime({ mode: 'loop', cycle: 120 }); // a 2-minute day from here
 pond.setTime({ mode: 'clock' });
+```
+
+## Night sky
+
+`sky` picks what the night (and the day's sky) adds to the pond:
+
+| Feature     | Default | What it does |
+| ----------- | ------- | ------------ |
+| `darkNight` | on      | At night, darker water and background and about half the floor caustics, so the night reads as night rather than a tinted day. Fades in and out through the blue hours; by day nothing changes. Dark palettes only: a light background stays light at night. |
+| `stars`     | on      | Reflected stars at night. (Accepted; not drawn yet.) |
+| `fireflies` | on      | Fireflies at dusk, over the fish. (Accepted; not drawn yet.) |
+| `moon`      | off     | The moon's reflection at night. (Accepted; not drawn yet.) |
+| `sun`       | off     | The sun's reflection as glitter by day. (Accepted; not drawn yet.) |
+
+- Omitted: the defaults above.
+- `true`: every feature on. `false`: every feature off, which is the pond
+  exactly as it looked in 0.2.
+- An object changes only the features it names: `{ moon: true }` adds the
+  moon to the defaults, `{ darkNight: false }` keeps the 0.2 night water.
+
+Invalid values never throw: a feature that is not `true` or `false` keeps its
+default, an unknown feature is ignored, and anything that is neither a
+boolean nor an object gives the defaults, each with a
+`console.warn('koi-ascii: …')`.
+
+```js
+createKoiPond(el, { sky: false }); // the 0.2 pond
+pond.setSky({ moon: true }); // defaults plus the moon
 ```
 
 ## Palettes
@@ -207,6 +238,13 @@ A background whose relative luminance is above 0.4 counts as light. A light
 background stays light at night: the night shows only in the glyphs. The
 glow halo is skipped on a light background.
 
+On a dark palette the night is darker by default (the `darkNight` sky
+feature): the water and a time-of-day graded background (`pond`, or a
+`filter` with a dark `background`) at about ×0.7, and fewer caustics. A
+`roles` background and a `ramp`'s first stop are never graded, so they keep
+their colour; the water drawn on them still darkens. Turn it
+off with `sky: { darkNight: false }`, or `sky: false` for the 0.2 look.
+
 In `ramp` and `roles`, the time of day changes only brightness, so the hues
 stay on your palette. `filter` (and so `pond`) keeps the full sky colours:
 dusk warmth and night blue. A filter without `background` keeps the pond's
@@ -300,7 +338,7 @@ logged to the console. Show your own fallback from `onError` if you want one.
   hidden, and continues without a jump when it comes back. `pause()` and the
   automatic pause combine: either one keeps it paused.
 - While a pond is paused (by `pause()` or because it is off-screen), it draws
-  nothing: a `setTime`, `setPalette`, `setIntensity` or a resize of the
+  nothing: a `setTime`, `setPalette`, `setIntensity`, `setSky` or a resize of the
   container shows when it resumes.
 - With `prefers-reduced-motion: reduce`, the fish swim slower and the water
   flickers less.
@@ -317,6 +355,7 @@ loads none of the debug code: no global, no panel, no shortcuts.
 https://luckmorecat.github.io/koi-ascii/?debug
 http://localhost:5173/?debug&seed=42&time=fixed&phase=0.8&view=raw
 http://localhost:5173/?palette=paper&intensity=0.35
+http://localhost:5173/?time=fixed&phase=0.95&sky=none
 ```
 
 ### URL params
@@ -335,19 +374,20 @@ link shows the same scene. Defaults are left out of the URL.
 | `glow`  | `on`, `off`               | The halo around bright cells. Needs `?debug`.                                  |
 | `palette` | `pond`, `mono`, `phosphor`, `amber`, `paper`, `brand` | A preset (custom palettes can't go in the URL). Default `pond`; anything else is `pond`. |
 | `intensity` | `0` … `1`               | Default 1.                                                                     |
+| `sky`   | `all` (or `on`), `none` (or `off`), or the features that are on, comma-separated: `stars,fireflies,darkNight,moon,sun` | Default `stars,fireflies,darkNight` (left out of the URL); `none` is the 0.2 pond. Anything unreadable gives the defaults. |
 
-`seed`, `time`, `phase`, `cycle`, `palette` and `intensity` also work without
+`seed`, `time`, `phase`, `cycle`, `palette`, `intensity` and `sky` also work without
 `?debug`. Pause and
-viewport size are not kept in the URL. The older `?perf` and `?sky=slider|loop`
-params are gone: an old `?sky=slider&phase=0.8` link now loops from 0.8;
-use `?time=fixed&phase=0.8` to hold it.
+viewport size are not kept in the URL. The older `?perf` param is gone, and
+`sky` no longer takes `slider|loop`: an old `?sky=slider&phase=0.8` link now
+loops from 0.8 with the default sky; use `?time=fixed&phase=0.8` to hold it.
 
 ### Panel and shortcuts
 
 `?debug` opens a panel (Perf, Time, Render, Scene, Capture) whose controls are
 generated from the API's tools, so everything it does an agent can do too,
 and it follows changes made through the API. The Render section has a preset
-dropdown and an intensity slider. Shortcuts work only with
+dropdown, an intensity slider and a toggle per sky feature. Shortcuts work only with
 `?debug`, without modifier keys, and not while typing in a text or number box:
 
 | Key     | Does                 |
@@ -400,13 +440,14 @@ console.log(await page.evaluate(() => koi.help()));
 
 | Tool          | Args                          | Does                                                                   |
 | ------------- | ----------------------------- | ---------------------------------------------------------------------- |
-| `getState`    |                               | The whole state: ready, paused, frame counter, time, render (view, glow, palette, intensity), seed, viewport, canvas size. |
+| `getState`    |                               | The whole state: ready, paused, frame counter, time, render (view, glow, palette, intensity), sky (each feature), seed, viewport, canvas size. |
 | `setTime`     | `mode?`, `phase?`, `cycle?`, `hold?` | Time of day; `hold` keeps the phase until a call with `hold: false`. |
 | `setDayPart`  | `part`                        | Jumps to a lighting keyframe (`night`, `blue-hour-am`, … `noon` …).    |
 | `getPerf`     |                               | fps, 1% low, frame / CPU / GPU ms (GPU `null` without the timer extension), canvas size, GPU string, software flag, seed. |
 | `setRender`   | `view?`, `glow?`              | `final` / `raw` view and the glow halo. The raw view ignores the palette and intensity. |
 | `setPalette`  | `palette`                     | Switches to a preset (`pond`, `mono`, `phosphor`, `amber`, `paper`, `brand`). |
 | `setIntensity` | `intensity`                  | 0 background only … 1 full pond.                                       |
+| `setSky`      | `stars?`, `fireflies?`, `darkNight?`, `moon?`, `sun?` | Turns sky features on or off; omitted ones keep their value. |
 | `reseed`      | `seed?`                       | Remounts the pond with a seed (random if omitted), as on a fresh load of the URL. |
 | `getFish`     |                               | Each fish's variety, position, heading, speed, depth, behaviour.      |
 | `pause`, `resume` |                           | Stops and restarts the frame loop (no catch-up after a pause).        |

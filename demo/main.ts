@@ -24,6 +24,7 @@ function mountPond(seed: number | undefined, time: KoiPondTime, look: PondLook, 
     seed,
     palette: look.palette,
     intensity: look.intensity,
+    sky: look.sky,
     onError: (error) => {
       console.error(error);
       fail(
@@ -36,7 +37,7 @@ function mountPond(seed: number | undefined, time: KoiPondTime, look: PondLook, 
   });
 }
 
-// Seed, time, palette and intensity come from the URL (see scene.ts). ?debug is the only gate for
+// Seed, time, palette, intensity and sky come from the URL (see scene.ts). ?debug is the only gate for
 // the tooling: without it none of the debug code is even downloaded.
 const scene = readScene(location.search);
 if (new URLSearchParams(location.search).has('debug')) {

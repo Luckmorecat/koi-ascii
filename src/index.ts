@@ -88,6 +88,30 @@ export interface KoiPondFilterPalette {
  */
 export type KoiPondPalette = KoiPondPaletteName | KoiPondRampPalette | KoiPondRolesPalette | KoiPondFilterPalette;
 
+/**
+ * Night-sky features, each on or off. Omitted fields keep their defaults:
+ * `stars`, `fireflies` and `darkNight` on, `moon` and `sun` off.
+ */
+export interface KoiPondSkyFeatures {
+  /** Reflected stars at night. */
+  stars?: boolean;
+  /** Fireflies at dusk, over the fish. */
+  fireflies?: boolean;
+  /** Darker water, fewer caustics and a darker background at night, on dark palettes only. */
+  darkNight?: boolean;
+  /** The moon's reflection at night. */
+  moon?: boolean;
+  /** The sun's reflection on the water by day, as glitter. */
+  sun?: boolean;
+}
+
+/**
+ * The night sky. `true` turns every feature on, `false` every one off (the
+ * pond as it was in 0.2); an object changes only the features it names.
+ * Invalid values fall back one by one with a `console.warn` (never a throw).
+ */
+export type KoiPondSky = boolean | KoiPondSkyFeatures;
+
 export interface KoiPondOptions {
   /** Default `{ mode: 'loop', cycle: 600, phase: 0 }`. */
   time?: KoiPondTime;
@@ -104,6 +128,8 @@ export interface KoiPondOptions {
   palette?: KoiPondPalette;
   /** 0 leaves only the background, 1 is the full pond (linear). Default 1. */
   intensity?: number;
+  /** Default: stars, fireflies and the darker night on; moon and sun off. */
+  sky?: KoiPondSky;
   /**
    * CSS colour shown before the first frame and if the pond fails. Default:
    * the palette's background (and it follows `setPalette`).
@@ -120,6 +146,8 @@ export interface KoiPond {
   setPalette(palette: KoiPondPalette): void;
   /** Changes the intensity from the next frame on; animate it for a fade. */
   setIntensity(intensity: number): void;
+  /** Changes the night-sky features from the next frame on, as the `sky` option would; the fish carry on. */
+  setSky(sky: KoiPondSky): void;
   /** Stops simulating and drawing until `resume()`; combines with the off-screen pause. */
   pause(): void;
   resume(): void;

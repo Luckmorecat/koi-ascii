@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SCENE, readScene, sceneTime, writeScene, type SceneState } from '../demo/scene';
+import { ALL_SKY, DEFAULT_SKY, NO_SKY } from '../src/sky-features';
 
 const scene = (over: Partial<SceneState>): SceneState => ({ ...DEFAULT_SCENE, ...over });
 
@@ -16,6 +17,7 @@ describe('readScene', () => {
       glow: true,
       palette: 'pond',
       intensity: 1,
+      sky: { stars: true, fireflies: true, darkNight: true, moon: false, sun: false },
     });
   });
 
@@ -58,6 +60,17 @@ describe('readScene', () => {
     }
   });
 
+  it('reads the sky features: all, none or a list of those on', () => {
+    expect(readScene('?sky=none').sky).toEqual(NO_SKY);
+    expect(readScene('?sky=off').sky).toEqual(NO_SKY);
+    expect(readScene('?sky=all').sky).toEqual(ALL_SKY);
+    expect(readScene('?sky=stars,moon').sky).toEqual({ stars: true, fireflies: false, darkNight: false, moon: true, sun: false });
+    expect(readScene('?sky=darkNight').sky).toEqual({ ...NO_SKY, darkNight: true });
+    // Unknown names are skipped; nothing readable at all is the defaults.
+    expect(readScene('?sky=moon,comets').sky).toEqual({ ...NO_SKY, moon: true });
+    for (const q of ['?sky=', '?sky=comets', '?sky=Stars']) expect(readScene(q).sky).toEqual(DEFAULT_SKY);
+  });
+
   it('treats a clock as having no phase or cycle', () => {
     expect(readScene('?time=clock&phase=0.3&cycle=60')).toEqual(scene({ time: 'clock' }));
   });
@@ -86,6 +99,13 @@ describe('writeScene', () => {
     expect(writeScene('', scene({ intensity: 1 / 3 }))).toBe('?intensity=0.3333');
   });
 
+  it('writes sky features other than the defaults, commas unescaped', () => {
+    expect(writeScene('?debug', scene({ sky: NO_SKY }))).toBe('?debug&sky=none');
+    expect(writeScene('?debug', scene({ sky: ALL_SKY }))).toBe('?debug&sky=all');
+    expect(writeScene('?debug', scene({ sky: { ...NO_SKY, stars: true, moon: true } }))).toBe('?debug&sky=stars,moon');
+    expect(writeScene('?sky=none&debug', scene({ sky: { ...DEFAULT_SKY } }))).toBe('?debug');
+  });
+
   it('writes the time by mode', () => {
     expect(writeScene('?debug', scene({ time: 'fixed', phase: 0.8 }))).toBe('?debug&time=fixed&phase=0.8');
     expect(writeScene('?debug', scene({ cycle: 60, phase: 0.5 }))).toBe('?debug&phase=0.5&cycle=60');
@@ -103,6 +123,10 @@ describe('writeScene', () => {
       scene({ time: 'clock' }),
       scene({ palette: 'brand', intensity: 0 }),
       scene({ palette: 'paper', intensity: 0.25, time: 'fixed', phase: 0.5 }),
+      scene({ sky: NO_SKY }),
+      scene({ sky: ALL_SKY, palette: 'paper' }),
+      scene({ sky: { ...DEFAULT_SKY, darkNight: false, moon: true } }),
+      scene({ sky: { ...NO_SKY, sun: true } }),
     ];
     for (const s of states) expect(readScene(writeScene('?debug', s))).toEqual(s);
   });

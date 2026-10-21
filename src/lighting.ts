@@ -39,6 +39,13 @@ export interface Lighting {
    * the scene pass does not read it). Higher at dusk and night, where halos read best.
    */
   glowStrength: number;
+  /**
+   * Darker night (the `darkNight` sky feature): multiplies flat water and a
+   * time-of-day graded background. 1 by day and whenever the feature is off.
+   */
+  darkWater: number;
+  /** Darker night: multiplies the density of flat water (floor caustics and motes), so fewer show. 1 by day or when off. */
+  darkCaustic: number;
 }
 
 // Everything except the direction, keyed by phase.
@@ -190,7 +197,32 @@ function arcDir(angle: number, lo: number, hi: number): Vec3 {
   return [(ax * c - ay * s) * h, (ax * s + ay * c) * h, Math.sin(el)];
 }
 
-export function lightingAt(phase: number): Lighting {
+/** Flat water and a graded background at full night with `darkNight` on. */
+const DARK_WATER = 0.7;
+/** Flat-water density at full night with `darkNight` on: about half the caustics show. */
+const DARK_CAUSTIC = 0.5;
+/** The blue hours the night fades across: out at dawn, back in at dusk. */
+const NIGHT_DAWN: readonly [number, number] = [0.17, 0.24];
+const NIGHT_DUSK: readonly [number, number] = [0.76, 0.83];
+
+/**
+ * How much of the night shows at a phase: 1 from the end of the evening blue
+ * hour to the start of the morning one, 0 by day, a smooth fade across each
+ * blue hour (so golden hour is still pure day).
+ */
+export function nightWeight(phase: number): number {
+  const p = ((phase % 1) + 1) % 1;
+  return 1 - smooth(NIGHT_DAWN[0], NIGHT_DAWN[1], p) * (1 - smooth(NIGHT_DUSK[0], NIGHT_DUSK[1], p));
+}
+
+/** What the sky features change in the lighting itself. */
+export interface LightingOptions {
+  /** The darker night: on only for a pond with `darkNight` on and a dark background (D5). */
+  darkNight?: boolean;
+}
+
+/** Lighting at `phase`; without options (or `darkNight` false) exactly the 0.2 lighting. */
+export function lightingAt(phase: number, options: LightingOptions = {}): Lighting {
   const p = ((phase % 1) + 1) % 1;
 
   let i = 0;
@@ -228,5 +260,12 @@ export function lightingAt(phase: number): Lighting {
     shadow,
     shadowAlpha: mix(a.shadowAlpha, b.shadowAlpha, t),
     glowStrength: mix(a.glow, b.glow, t),
+    ...darkNight(options.darkNight ? nightWeight(p) : 0),
   };
+}
+
+function darkNight(night: number): Pick<Lighting, 'darkWater' | 'darkCaustic'> {
+  // Exactly 1 when off or by day, so the shaders leave everything untouched (D4).
+  if (night <= 0) return { darkWater: 1, darkCaustic: 1 };
+  return { darkWater: mix(1, DARK_WATER, night), darkCaustic: mix(1, DARK_CAUSTIC, night) };
 }

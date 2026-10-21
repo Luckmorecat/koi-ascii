@@ -129,7 +129,7 @@ function deepFreeze<T>(value: T): T {
 /** The presets behind the public `koiPalettes`, frozen all the way down. */
 export const PRESETS = deepFreeze(presets);
 
-function warn(message: string): void {
+export function warn(message: string): void {
   console.warn(`koi-ascii: ${message}`);
 }
 

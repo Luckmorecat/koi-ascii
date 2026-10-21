@@ -131,9 +131,14 @@ export const LOOK_FILTER = 2;
 /** Share of the sky's reflection (warm at dawn and dusk) laid over the background. */
 const BG_SKY = 0.15;
 
-/** A dark background graded by the time of day, the way the pond's own is. */
+/**
+ * A dark background graded by the time of day, the way the pond's own is,
+ * and darker at night with the `darkNight` sky feature.
+ */
 export function graded(bg: RGB, light: Lighting): RGB {
-  return [0, 1, 2].map((i) => bg[i] * light.water[i] + light.sky[i] * BG_SKY) as Vec3;
+  const c = [0, 1, 2].map((i) => bg[i] * light.water[i] + light.sky[i] * BG_SKY) as Vec3;
+  // Skipped at 1, so a pond without the darker night keeps 0.2's exact values (D4).
+  return light.darkWater === 1 ? c : (c.map((v) => v * light.darkWater) as Vec3);
 }
 
 export interface AsciiLook {

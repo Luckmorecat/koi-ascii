@@ -63,7 +63,7 @@ test('with ?debug: koi.ready resolves and tools() lists every tool with a schema
   await expect(page.locator('#koi-debug')).toBeVisible();
   const tools = await page.evaluate(() => window.koi!.tools());
   const names = tools.map((t) => t.name);
-  for (const n of ['getState', 'setTime', 'reseed', 'step', 'capture', 'setViewport', 'getPerf', 'setRender', 'setPalette', 'setIntensity']) {
+  for (const n of ['getState', 'setTime', 'reseed', 'step', 'capture', 'setViewport', 'getPerf', 'setRender', 'setPalette', 'setIntensity', 'setSky']) {
     expect(names).toContain(n);
   }
   for (const t of tools) {
@@ -225,4 +225,32 @@ test('setPalette and setIntensity: URL, state, panel controls and a reseed', asy
   expect(r).toMatchObject({ palette: 'mono', intensity: 0.35 });
   expect(new URL(page.url()).searchParams.get('intensity')).toBe('0.35');
   expect(await farthestFrom(page, await capture(), MONO_BG)).toBeGreaterThan(10);
+});
+
+test('setSky: URL, state, panel toggles and a reseed', async ({ page }) => {
+  await openDebug(page, '&time=fixed&phase=0.95&sky=none');
+  expect(await page.evaluate(async () => (await (window.koi as unknown as Tools).getState()).sky)).toEqual({
+    stars: false,
+    fireflies: false,
+    darkNight: false,
+    moon: false,
+    sun: false,
+  });
+
+  // The panel has a toggle per feature; the darkNight one drives setSky live.
+  const box = page.locator('#koi-debug label').filter({ hasText: 'darkNight' }).locator('input[type=checkbox]');
+  await expect(box).not.toBeChecked();
+  await box.check();
+  await expect.poll(() => new URL(page.url()).searchParams.get('sky')).toBe('darkNight');
+
+  const sky = await page.evaluate(async () => {
+    const k = window.koi as unknown as Tools;
+    await k.setSky({ stars: true, fireflies: true });
+    await k.reseed({ seed: 5 });
+    return (await k.getState()).sky;
+  });
+  // Back to the defaults: the URL drops the param, and a reseed keeps the sky.
+  expect(sky).toEqual({ stars: true, fireflies: true, darkNight: true, moon: false, sun: false });
+  expect(new URL(page.url()).searchParams.get('sky')).toBeNull();
+  await expect(box).toBeChecked();
 });

@@ -22,6 +22,8 @@ uniform vec3 uSky;       // sky reflection added to lit water
 uniform float uGlint;
 uniform float uCaustic;
 uniform float uFloor;    // minimum light per channel on fish (night legibility)
+uniform float uDarkWater;   // darker night: flat water colour ×, 1 when off or by day
+uniform float uDarkCaustic; // darker night: flat water density × (fewer caustics), 1 when off or by day
 uniform vec2 uShadow;    // shadow offset, px, away from the light
 uniform float uShadowAlpha;
 uniform float uCalm;     // 1 under reduced motion: flicker slows further
@@ -225,6 +227,10 @@ Cell water(vec2 p, float h, vec2 g) {
   c.dens = max(mote * 0.5, lit * mix(0.6, 1.0, uCaustic));
   // Kept dimmer than ripples and trails, which share the light glyphs.
   c.col = mix(uWaterDim, uWaterLit, 0.6 * lit * min(uCaustic, 1.0)) * uWaterTint + uSky;
+  // The darker night (sky feature darkNight). Each is skipped at 1, so
+  // without it the water is exactly 0.2's (D4).
+  if (uDarkWater < 1.0) c.col *= uDarkWater;
+  if (uDarkCaustic < 1.0) c.dens *= uDarkCaustic;
   c.aux = hash12(mp + 3.1);
   c.dir = vec2(1.0, 0.0);
   c.style = 0.0;

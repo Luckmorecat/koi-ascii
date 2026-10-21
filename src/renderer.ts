@@ -13,6 +13,7 @@ import { pondUnit, type Pond } from './pond';
 import { lightingAt, type Lighting } from './lighting';
 import { POND, POND_BG, WHITE, type ResolvedPalette } from './palette';
 import { asciiLook, brightnessOnly, POND_SCENE, rolesScene, type SceneColors } from './look';
+import { DEFAULT_SKY, type SkyFeatures } from './sky-features';
 
 /** World px per ripple simulation texel. */
 const RIPPLE_PX = 5;
@@ -49,6 +50,8 @@ export class Renderer {
   palette: ResolvedPalette = POND;
   /** 0 only the background … 1 the full pond; already clamped to [0, 1]. */
   intensity = 1;
+  /** Night-sky features, already resolved; mount() owns them like the palette. */
+  sky: SkyFeatures = DEFAULT_SKY;
 
   private readonly gl: WebGL2RenderingContext;
   private readonly fontFamily: string;
@@ -136,6 +139,11 @@ export class Renderer {
     if (palette.mode === 'ramp') palette.stops.forEach((c, i) => this.stopBuf.set(c, i * 3));
   }
 
+  /** Sets the night-sky features; the next render() draws with them. */
+  setSky(sky: SkyFeatures): void {
+    this.sky = sky;
+  }
+
   /** Sizes everything for a drawing buffer of devW × devH device pixels. */
   resize(devW: number, devH: number, dpr: number): void {
     const gl = this.gl;
@@ -198,9 +206,10 @@ export class Renderer {
   /** `phase` is the time of day in [0, 1), 0 = midnight (see sky.ts). */
   render(pond: Pond, dt: number, phase: number): void {
     this.phase = phase;
-    const light = (this.light = lightingAt(phase));
     // The raw view is a fixed reference: the pond's own colours, no palette (A13).
     const palette = this.raw ? POND : this.palette;
+    // A light background stays light at night: no darker night there (D5).
+    const light = (this.light = lightingAt(phase, { darkNight: this.sky.darkNight && !palette.light }));
     const roles = palette.mode === 'roles';
     const colors = this.raw ? POND_SCENE : this.sceneColors;
     // Roles keep their hues at every hour; only the brightness follows the time (Q14).
@@ -268,6 +277,8 @@ export class Renderer {
       .float('uGlint', light.glint)
       .float('uCaustic', light.caustic)
       .float('uFloor', light.floor)
+      .float('uDarkWater', light.darkWater)
+      .float('uDarkCaustic', light.darkCaustic)
       .vec2('uShadow', unit * light.shadow[0], unit * light.shadow[1])
       .float('uShadowAlpha', light.shadowAlpha)
       // Reduced motion: flicker (ogon twinkle, water glints) runs slower still.
