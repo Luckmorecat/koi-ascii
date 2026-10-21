@@ -1,4 +1,4 @@
-import { Koi, type Pointer, type Tap, type World } from './koi/koi';
+import { Koi, type AvoidZone, type Pointer, type Tap, type World } from './koi/koi';
 import {
   FISH_TEXELS,
   J_TOTAL,
@@ -57,6 +57,11 @@ export class Pond implements World {
   unit: number;
   time = 0;
   calm = false;
+  /** PROTOTYPE avoid-zones: set by demo/prototype-avoid every frame. */
+  avoid: AvoidZone[] = [];
+  avoidPush = 0;
+  /** PROTOTYPE avoid-zones: shader knobs (0..1 thin/dim for water and fish, feather in px). */
+  avoidLook = { waterThin: 0, waterDim: 0, fishDim: 0, feather: 24, show: false };
   readonly fish: Koi[] = [];
   readonly pointer: Pointer = { x: 0, y: 0, inside: false, lastMove: -Infinity, speed: 0, linger: false };
   readonly taps: Tap[] = [];

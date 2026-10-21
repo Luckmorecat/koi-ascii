@@ -26,6 +26,27 @@ uniform vec2 uShadow;    // shadow offset, px, away from the light
 uniform float uShadowAlpha;
 uniform float uCalm;     // 1 under reduced motion: flicker slows further
 
+// PROTOTYPE avoid-zones
+uniform int uAvoidN;
+uniform vec4 uAvoid[8];   // x, y, w, h in world px
+uniform vec4 uAvoidR[8];  // x: corner radius
+uniform vec3 uAvoidLook;  // water thin, water dim, fish dim (0..1)
+uniform vec2 uAvoidFeather; // feather px, show outlines
+
+float avoidMask(vec2 p) {
+  float m = 0.0;
+  float f = max(uAvoidFeather.x, 0.5);
+  for (int i = 0; i < 8; i++) {
+    if (i >= uAvoidN) break;
+    vec2 hs = uAvoid[i].zw * 0.5;
+    float r = min(uAvoidR[i].x, min(hs.x, hs.y));
+    vec2 q = abs(p - uAvoid[i].xy - hs) - hs + r;
+    float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+    m = max(m, 1.0 - smoothstep(0.0, f, d));
+  }
+  return m;
+}
+
 layout(location = 0) out vec4 oColor; // rgb colour, a density (for the raw view)
 layout(location = 1) out vec4 oInfo;  // r glyph index, g cell class
 
@@ -645,7 +666,20 @@ void main() {
     drawFish(uOrder[k], p, refr, c);
   }
 
+  // PROTOTYPE avoid-zones: thin and dim what is under page content.
+  float am = uAvoidN > 0 ? avoidMask(p) : 0.0;
+  if (am > 0.0) {
+    bool waterish = c.mat <= M_TRAIL || c.mat == M_GLINT;
+    if (waterish) {
+      c.dens *= 1.0 - uAvoidLook.x * am;
+      c.col *= 1.0 - uAvoidLook.y * am;
+    } else {
+      c.dens *= 1.0 - 0.6 * uAvoidLook.z * am;
+      c.col *= 1.0 - uAvoidLook.z * am;
+    }
+  }
   int glyph = pickGlyph(c, ivec2(gl_FragCoord.xy));
+  if (uAvoidFeather.y > 0.5 && am > 0.02 && am < 0.98 && abs(am - 0.5) < 0.08) { c.col = vec3(1.0, 0.3, 0.6); glyph = G_DOT; }
   oColor = vec4(c.col, clamp(c.dens, 0.0, 1.0));
   oInfo = vec4(float(glyph) / 255.0, float(c.mat) / 255.0, 0.0, 0.0);
 }

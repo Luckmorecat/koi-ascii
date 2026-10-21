@@ -45,7 +45,8 @@
     "test": "vitest run",
     "prepublishOnly": "npm run typecheck && npm run build",
     "test:browser": "playwright test",
-    "shot": "node --experimental-strip-types scripts/shot.mjs"
+    "shot": "node --experimental-strip-types scripts/shot.mjs",
+    "proto:avoid": "vite --config vite.demo.config.ts --open /prototype-avoid/"
   },
   "devDependencies": {
     "@fontsource/jetbrains-mono": "^5.3.0",

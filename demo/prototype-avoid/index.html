@@ -1,0 +1,73 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Question: how should page content over the pond stay
+  readable? (Luckmorecat/koi-ascii#1, item 6). Five variants on one realistic
+  landing page, switched with ?variant=A…E and the bar at the bottom:
+    A none · B steer · C under · D mixed · E css-only
+  Run: npm run proto:avoid
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>PROTOTYPE avoid zones</title>
+  </head>
+  <body>
+    <div id="pond"></div>
+
+    <nav class="nav" data-avoid="steer">
+      <span class="logo">&gt;&lt;(((o&gt; Tidewater</span>
+      <span class="links"><a href="#">Product</a><a href="#">Pricing</a><a href="#">Docs</a><a href="#">Sign in</a></span>
+    </nav>
+
+    <main>
+      <header class="hero">
+        <h1 data-avoid="steer">Ship calmer software.</h1>
+        <p class="lede" data-avoid="steer">
+          Tidewater watches your deploys, spots the ripple before it becomes a wave, and rolls back while you sleep.
+        </p>
+        <div class="ctas" data-avoid="steer">
+          <a class="btn primary" href="#">Start free</a>
+          <a class="btn" href="#">Book a demo</a>
+        </div>
+      </header>
+
+      <section class="cards">
+        <article class="card" data-avoid="under">
+          <h2>Canary by default</h2>
+          <p>Every release reaches 1% of traffic first. Error budgets decide whether it goes wider, not a pager at 3 am.</p>
+          <a href="#">How canaries work →</a>
+        </article>
+        <article class="card" data-avoid="under">
+          <h2>One-click rollback</h2>
+          <p>Each deploy keeps its previous image warm for 24 hours, so going back takes seconds instead of a rebuild.</p>
+          <a href="#">See the timeline →</a>
+        </article>
+        <article class="card" data-avoid="under">
+          <h2>Quiet alerts</h2>
+          <p>Alerts group by cause and wait for a second signal. Fewer, better pages — and a digest for the rest.</p>
+          <a href="#">Alert rules →</a>
+        </article>
+      </section>
+
+      <section class="prose" data-avoid="under">
+        <h2>Why teams switch</h2>
+        <p>
+          Most incident reviews end with the same sentence: we saw it coming, we just did not act in time. Tidewater
+          turns the signals you already collect into a decision about the next step of a rollout. It does not replace
+          your dashboards; it reads them for you and stops a bad release while it is still small.
+        </p>
+        <p>
+          Setup is a single manifest in your repository. There is no agent to install and nothing to migrate: point it
+          at your metrics, choose a budget, and the next deploy goes out as a canary.
+        </p>
+      </section>
+
+      <footer class="foot" data-avoid="under">© 2026 Tidewater · prototype page for koi-ascii avoid zones</footer>
+    </main>
+
+    <div id="proto-panel"></div>
+    <div id="proto-bar"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

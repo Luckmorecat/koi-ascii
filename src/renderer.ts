@@ -58,6 +58,9 @@ export class Renderer {
   private readonly glowProg: Program | null;
   private readonly fishTex: WebGLTexture;
   private readonly dropBuf = new Float32Array(MAX_DROPS * 4);
+  /** PROTOTYPE avoid-zones: up to 8 rects (x, y, w, h) and corner radii. */
+  private readonly avoidBuf = new Float32Array(8 * 4);
+  private readonly avoidR = new Float32Array(8 * 4);
 
   private atlas: Atlas | null = null;
   private ripple: [Target, Target] | null = null;
@@ -244,6 +247,21 @@ export class Renderer {
       .float('uShadowAlpha', light.shadowAlpha)
       // Reduced motion: flicker (ogon twinkle, water glints) runs slower still.
       .float('uCalm', pond.calm ? 1 : 0);
+    // PROTOTYPE avoid-zones
+    const zones = pond.avoid.slice(0, 8);
+    this.avoidBuf.fill(0);
+    this.avoidR.fill(0);
+    zones.forEach((z, i) => {
+      this.avoidBuf.set([z.x, z.y, z.w, z.h], i * 4);
+      this.avoidR[i * 4] = z.r;
+    });
+    const look = pond.avoidLook;
+    this.sceneProg
+      .int('uAvoidN', zones.length)
+      .vec4s('uAvoid', this.avoidBuf)
+      .vec4s('uAvoidR', this.avoidR)
+      .vec3('uAvoidLook', look.waterThin, look.waterDim, look.fishDim)
+      .vec2('uAvoidFeather', look.feather, look.show ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // 3. Halo of the bright cells, at cell resolution. Not needed in the raw view.

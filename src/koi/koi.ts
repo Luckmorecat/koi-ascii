@@ -77,6 +77,43 @@ export interface World {
   /** Reduced motion: no bursts, startles or splashes. */
   readonly calm: boolean;
   drop(x: number, y: number, radius: number, amount: number): void;
+  /** PROTOTYPE avoid-zones: rects (pond px) fish treat as soft walls, and how hard they push (0 = pass under). */
+  readonly avoid?: readonly AvoidZone[];
+  readonly avoidPush?: number;
+}
+
+/** PROTOTYPE avoid-zones. */
+export interface AvoidZone {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  r: number;
+  /** Per-zone push multiplier (0: fish pass under this one). */
+  push: number;
+}
+
+/** PROTOTYPE avoid-zones: signed distance from (px, py) to a rect, and the outward normal there. */
+export function rectSdf(z: AvoidZone, px: number, py: number): [number, number, number] {
+  const hx = z.w / 2;
+  const hy = z.h / 2;
+  const qx = px - (z.x + hx);
+  const qy = py - (z.y + hy);
+  const dx = Math.abs(qx) - hx;
+  const dy = Math.abs(qy) - hy;
+  if (dx > 0 || dy > 0) {
+    const ox = Math.max(dx, 0);
+    const oy = Math.max(dy, 0);
+    const d = Math.hypot(ox, oy) || 1e-6;
+    return [d, (ox / d) * Math.sign(qx), (oy / d) * Math.sign(qy)];
+  }
+  // Inside: out through the nearest side.
+  return dx > dy ? [dx, Math.sign(qx) || 1, 0] : [dy, 0, Math.sign(qy) || 1];
+}
+
+/** PROTOTYPE avoid-zones: true when (x, y) is inside any zone grown by `pad`. */
+export function inZones(zones: readonly AvoidZone[] | undefined, x: number, y: number, pad: number): boolean {
+  return !!zones?.some((z) => z.push > 0 && rectSdf(z, x, y)[0] < pad);
 }
 
 export class Koi {
@@ -295,6 +332,25 @@ export class Koi {
     else if (ax > w.width - margin) sx -= ((ax - (w.width - margin)) / margin) * 3;
     if (ay < margin) sy += ((margin - ay) / margin) * 3;
     else if (ay > w.height - margin) sy -= ((ay - (w.height - margin)) / margin) * 3;
+    // PROTOTYPE avoid-zones: page content as soft walls, probed at the look-ahead
+    // point and at the head (a zone that scrolled over the fish pushes it out).
+    const push = w.avoidPush ?? 0;
+    if (push > 0 && w.avoid) {
+      const zm = L * 0.6;
+      for (const z of w.avoid) {
+        if (z.push <= 0) continue;
+        for (const [px, py, gain] of [
+          [ax, ay, 3],
+          [this.x, this.y, 2],
+        ] as const) {
+          const [d, nx, ny] = rectSdf(z, px, py);
+          if (d >= zm) continue;
+          const k = (d < 0 ? 1 + Math.min(-d / zm, 1) : (zm - d) / zm) * gain * push * z.push;
+          sx += nx * k;
+          sy += ny * k;
+        }
+      }
+    }
     const wallK = Math.hypot(sx - sx0, sy - sy0);
 
     // Personal space from fish at a similar depth; deeper/shallower ones can pass over.
@@ -343,7 +399,10 @@ export class Koi {
         // Somewhere worth swimming to, not right under its nose.
         const pick = () => ({ x: w.width * this.rng.range(0.15, 0.85), y: w.height * this.rng.range(0.15, 0.85) });
         let poi = pick();
-        for (let k = 0; k < 6 && Math.hypot(poi.x - this.x, poi.y - this.y) < 0.35 * w.unit; k++) poi = pick();
+        // PROTOTYPE avoid-zones: steering fish don't pick a spot under page content.
+        const bad = (q: { x: number; y: number }) =>
+          Math.hypot(q.x - this.x, q.y - this.y) < 0.35 * w.unit || ((w.avoidPush ?? 0) > 0 && inZones(w.avoid, q.x, q.y, L * 0.5));
+        for (let k = 0; k < 12 && bad(poi); k++) poi = pick();
         this.poi = poi;
         this.poiUntil = t + this.rng.range(8, 14);
       }
