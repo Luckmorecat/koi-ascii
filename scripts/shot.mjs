@@ -1,6 +1,8 @@
 // Screenshots and frame timings of the demo on the GPU, for checking a change
 // by eye. Starts its own Vite server on a free port and stops it on exit, so
 // nothing is left running. Prints one JSON report; exits 1 on page errors.
+// Run it through `npm run shot`, which passes --experimental-strip-types so
+// Node 22 releases before 22.18 can import gpu.ts too.
 //
 //   npm run shot -- [query] [--size 1280x800] [--dpr 1] [--wait 2500]
 //                   [--shots 1] [--every 700] [--eval js] [--perf secs] [--out dir]
