@@ -1,4 +1,4 @@
-import { J_BODY, J_TAIL, J_TOTAL, TRAIL_N } from './layout';
+import { J_BODY, J_TAIL, J_TOTAL, TRAIL_CHUNK, TRAIL_CHUNKS, TRAIL_N } from './layout';
 import type { Variety } from './varieties';
 import { Rng, noise1 } from '../rng';
 
@@ -130,6 +130,8 @@ export class Koi {
   readonly bbox = new Float32Array(4);
   /** Bounds of the trail written by the last writeTrail call. */
   readonly trailBox = new Float32Array(4);
+  /** Bounds of each chunk of that trail: min.xy, max.xy per chunk. */
+  readonly trailChunks = new Float32Array(TRAIL_CHUNKS * 4);
 
   /** Ring buffer of trail samples: x, y, time. */
   private readonly trail = new Float32Array((TRAIL_N - 1) * 3);
@@ -681,6 +683,9 @@ export class Koi {
   /**
    * Writes trail samples newest-first as texels (x, y, age, 0) starting at
    * `base`, beginning with the live tail-tip position. Returns the count.
+   * Chunk c of trailChunks bounds segments 1 + c * TRAIL_CHUNK to
+   * (c + 1) * TRAIL_CHUNK (segment k joins samples k - 1 and k); a chunk past
+   * the last segment is empty.
    */
   writeTrail(out: Float32Array, base: number, t: number): number {
     const cap = TRAIL_N - 1;
@@ -716,6 +721,26 @@ export class Koi {
     this.trailBox[1] = minY;
     this.trailBox[2] = maxX;
     this.trailBox[3] = maxY;
+    const boxes = this.trailChunks;
+    for (let c = 0; c < TRAIL_CHUNKS; c++) {
+      const first = c * TRAIL_CHUNK;
+      const last = first + 1 < n ? Math.min(first + TRAIL_CHUNK, n - 1) : -1;
+      let x0 = 1e9;
+      let y0 = 1e9;
+      let x1 = -1e9;
+      let y1 = -1e9;
+      for (let i = first; i <= last; i++) {
+        const o = base + i * 4;
+        x0 = Math.min(x0, out[o]);
+        y0 = Math.min(y0, out[o + 1]);
+        x1 = Math.max(x1, out[o]);
+        y1 = Math.max(y1, out[o + 1]);
+      }
+      boxes[c * 4] = x0;
+      boxes[c * 4 + 1] = y0;
+      boxes[c * 4 + 2] = x1;
+      boxes[c * 4 + 3] = y1;
+    }
     return n;
   }
 

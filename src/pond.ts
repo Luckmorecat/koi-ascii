@@ -5,6 +5,7 @@ import {
   J_TOTAL,
   MAX_FISH,
   T_BBOX,
+  T_CBOX,
   T_EYE,
   T_FIN,
   T_P0,
@@ -202,6 +203,7 @@ export class Pond implements World {
       d.set(k.bbox, row + T_BBOX * 4);
       const count = k.writeTrail(d, row + T_TRAIL * 4, this.time);
       d.set(k.trailBox, row + T_TBOX * 4);
+      d.set(k.trailChunks, row + T_CBOX * 4);
       d.set([count, k.variety.trailWidth * k.length, 0, 0], row + T_P1 * 4);
     }
     // Deepest first. Two fish normally swap only while their bounds are apart,

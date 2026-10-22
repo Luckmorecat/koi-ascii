@@ -17,25 +17,35 @@ void trails(vec2 p, inout Cell c) {
     vec4 P1 = F(f, T_P1);
     int n = int(P1.x + 0.5);
     float w0 = P1.y;
-    if (n < 2 || !inBox(p, F(f, T_TBOX), w0 * 2.5 + uCell.y)) continue;
+    // Past the widest a segment draws: w below tops out at w0 * 1.9 + 0.3 * cell.
+    float pad = w0 * 2.5 + uCell.y;
+    if (n < 2 || !inBox(p, F(f, T_TBOX), pad)) continue;
     int variety = int(F(f, T_P0).x + 0.5);
-    vec4 A = F(f, T_TRAIL);
-    for (int k = 1; k < TRAIL_N; k++) {
-      if (k >= n) break;
-      vec4 B = F(f, T_TRAIL + k);
-      vec2 ab = B.xy - A.xy;
-      vec2 ap = p - A.xy;
-      float t = clamp(dot(ap, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
-      float dist = length(ap - ab * t);
-      float age = mix(A.z, B.z, t);
-      float w = w0 * (0.5 + 1.4 * age) + 0.3 * min(uCell.x, uCell.y);
-      float I = pow(1.0 - age, 1.3) * (1.0 - smoothstep(w * 0.35, w, dist));
-      if (I > best) {
-        best = I;
-        bestDir = ab;
-        bestVariety = variety;
+    // Segments come TRAIL_CHUNK to a box (Koi.writeTrail); p outside a box is out
+    // of reach of all its segments, so the chunk is skipped.
+    for (int ch = 0; ch < TRAIL_CHUNKS; ch++) {
+      int k0 = 1 + ch * TRAIL_CHUNK;
+      if (k0 >= n) break;
+      if (!inBox(p, F(f, T_CBOX + ch), pad)) continue;
+      vec4 A = F(f, T_TRAIL + k0 - 1);
+      for (int j = 0; j < TRAIL_CHUNK; j++) {
+        int k = k0 + j;
+        if (k >= n) break;
+        vec4 B = F(f, T_TRAIL + k);
+        vec2 ab = B.xy - A.xy;
+        vec2 ap = p - A.xy;
+        float t = clamp(dot(ap, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+        float dist = length(ap - ab * t);
+        float age = mix(A.z, B.z, t);
+        float w = w0 * (0.5 + 1.4 * age) + 0.3 * min(uCell.x, uCell.y);
+        float I = pow(1.0 - age, 1.3) * (1.0 - smoothstep(w * 0.35, w, dist));
+        if (I > best) {
+          best = I;
+          bestDir = ab;
+          bestVariety = variety;
+        }
+        A = B;
       }
-      A = B;
     }
   }
   if (best < 0.05) return;
