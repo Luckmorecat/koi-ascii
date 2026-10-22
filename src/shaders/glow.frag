@@ -31,9 +31,11 @@ void main() {
       float k = exp(-dot(d, d) * 0.6);
       wsum += k;
       ivec2 n = cell + ivec2(x, y);
-      if (any(lessThan(n, ivec2(0))) || any(greaterThanEqual(n, uGrid))) continue;
-      vec4 e = emission(n);
-      sum += e.rgb * e.a * k;
+      // Fetch every tap, clamped into the grid, and drop the off-grid ones at
+      // the add: skipping before the fetches would keep them from batching.
+      ivec2 nc = clamp(n, ivec2(0), uGrid - 1);
+      vec4 e = emission(nc);
+      if (all(equal(n, nc))) sum += e.rgb * e.a * k;
     }
   }
   // Soft knee: dense glints (a dusk crest) saturate toward ~0.4 instead of
