@@ -23,6 +23,7 @@ uniform float uIntensity;   // 0 only the background … 1 the full pond
 #ifdef GLOW
 uniform sampler2D uGlow; // cell-resolution halo, linear filtered (see glow.frag)
 uniform vec2 uGlowScale;  // grid px → glow texture coordinates
+uniform int uGlowOn;      // 0 when the renderer cleared the halo instead of drawing it
 #endif
 
 out vec4 fragColor;
@@ -75,8 +76,10 @@ void main() {
   vec3 bg = uBg;
 #ifdef GLOW
   // The halo lights only the background between strokes; ink keeps the
-  // glyph's own colour, so shapes stay crisp under the glow.
-  bg += texture(uGlow, (vec2(q) + 0.5) * uGlowScale).rgb;
+  // glyph's own colour, so shapes stay crisp under the glow. A cleared halo
+  // would add exactly 0, so it is not sampled; the branch is uniform, so
+  // derivatives stay defined.
+  if (uGlowOn == 1) bg += texture(uGlow, (vec2(q) + 0.5) * uGlowScale).rgb;
 #endif
   vec3 c = mix(bg, s0.rgb, ink);
   // One uniform branch around the look, so the plain pond skips it in a single

@@ -342,9 +342,11 @@ export class Renderer {
 
     // 3. Halo of the bright cells, at cell resolution. Not needed in the raw view.
     const glowProg = this.raw ? null : this.glowProg;
+    const haloDrawn = !!(glowProg && this.glowTarget) && this.glow && !palette.light;
     if (glowProg && this.glowTarget && (!this.glow || palette.light)) {
       // Switched off, or a light background (no glow there, Q6): an empty
-      // halo, since the ascii pass always adds it.
+      // halo, which the ascii pass skips (uGlowOn). Cleared all the same, so
+      // the target never holds a stale halo outside the raw view.
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowTarget.fbo);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
@@ -390,7 +392,8 @@ export class Renderer {
       // Bound in the raw view too (stale there, but the raw branch never reads it).
       ascii
         .texture('uGlow', 3, this.glowTarget.textures[0])
-        .vec2('uGlowScale', 1 / (this.cols * atlas.cellW), 1 / (this.rows * atlas.cellH));
+        .vec2('uGlowScale', 1 / (this.cols * atlas.cellW), 1 / (this.rows * atlas.cellH))
+        .int('uGlowOn', haloDrawn ? 1 : 0);
     }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
