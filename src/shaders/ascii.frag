@@ -61,7 +61,9 @@ void main() {
     fragColor = vec4(uRaw == 1 ? uRawBg : uOutBg, 1.0);
     return;
   }
-  ivec2 cell = q / uCellPx;
+  // Divided in float (RDNA has no integer divide). Exact for 0 <= q < 2^20:
+  // (q + 0.5) / c = k + (r + 0.5) / c keeps 0.5 / c from an integer, so floor is k.
+  ivec2 cell = ivec2(floor((vec2(q) + 0.5) / vec2(uCellPx)));
   ivec2 local = q - cell * uCellPx;
   vec4 s0 = texelFetch(uScene0, cell, 0);
   if (uRaw == 1) {
