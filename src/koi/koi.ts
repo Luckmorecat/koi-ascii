@@ -30,6 +30,10 @@ function profile(u: number): number {
   return PROFILE[PROFILE.length - 1][1];
 }
 
+/** profile() at each body joint, u = i / (J_BODY - 1); the same for every fish and frame. */
+const JOINT_PROFILE = Float64Array.from({ length: J_BODY }, (_, i) => profile(i / (J_BODY - 1)));
+const PEDUNCLE_PROFILE = profile(1);
+
 const clamp = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi ? hi : x);
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -37,6 +41,9 @@ function smoothstep(e0: number, e1: number, x: number): number {
   const t = clamp((x - e0) / (e1 - e0), 0, 1);
   return t * t * (3 - 2 * t);
 }
+
+/** How far tail joint J_BODY + n has spread from the peduncle width to the full tail width. */
+const TAIL_SPREAD = Float64Array.from({ length: J_TAIL }, (_, n) => Math.pow(smoothstep(0, 0.85, (n + 1) / J_TAIL), 0.75));
 
 function wrapAngle(a: number): number {
   a = (a + Math.PI) % TAU;
@@ -85,6 +92,8 @@ export class Koi {
   readonly patternSeed: number;
   private readonly rng: Rng;
   private readonly noiseSeed: number;
+  /** cos and sin of +maxBend, then of -maxBend: body joints from 0, tail joints from 4. */
+  private readonly bendTrig: Float64Array;
 
   length = 1;
   x = 0;
@@ -141,6 +150,9 @@ export class Koi {
 
   constructor(variety: Variety, seed: number, world: World) {
     this.variety = variety;
+    this.bendTrig = Float64Array.from(
+      [variety.bodyBend, variety.tailBend].flatMap((m) => [Math.cos(m), Math.sin(m), Math.cos(-m), Math.sin(-m)]),
+    );
     this.rng = new Rng(seed);
     this.noiseSeed = this.rng.range(0, 100);
     this.patternSeed = this.rng.range(0, 40);
@@ -508,11 +520,23 @@ export class Koi {
         dx /= d;
         dy /= d;
       }
-      const bend = Math.atan2(px * dy - py * dx, px * dx + py * dy);
-      if (Math.abs(bend) > maxBend) {
-        const a = Math.sign(bend) * maxBend;
-        const c = Math.cos(a);
-        const sn = Math.sin(a);
+      const cross = px * dy - py * dx;
+      const dot = px * dx + py * dy;
+      // For these unit vectors past = sin(|bend| - maxBend), which has the sign of
+      // |bend| - maxBend. Only a joint within rounding of the limit needs atan2 to
+      // decide as before; the rest skip it.
+      const t = i < J_BODY ? 0 : 4;
+      const past = Math.abs(cross) * this.bendTrig[t] - dot * this.bendTrig[t + 1];
+      let side = 0;
+      if (past > 1e-9 && cross !== 0) side = cross > 0 ? 1 : -1;
+      else if (past >= -1e-9) {
+        const bend = Math.atan2(cross, dot);
+        if (Math.abs(bend) > maxBend) side = Math.sign(bend);
+      }
+      if (side !== 0) {
+        // cos and sin of side * maxBend, the same values Math.cos/sin give for it.
+        const c = this.bendTrig[side > 0 ? t : t + 2];
+        const sn = this.bendTrig[side > 0 ? t + 1 : t + 3];
         dx = px * c - py * sn;
         dy = px * sn + py * c;
       }
@@ -531,7 +555,7 @@ export class Koi {
     const tailLen = L * v.tailLength;
     const total = L + tailLen;
     const maxR = v.radius * L;
-    const pedR = maxR * profile(1);
+    const pedR = maxR * PEDUNCLE_PROFILE;
 
     for (let i = 0; i < J_TOTAL; i++) {
       const i0 = Math.max(i - 1, 0);
@@ -547,11 +571,11 @@ export class Koi {
       if (i < J_BODY) {
         const u = i / (J_BODY - 1);
         a = (u * L) / total;
-        r = maxR * profile(u);
+        r = maxR * JOINT_PROFILE[i];
       } else {
         const k = (i - J_BODY + 1) / J_TAIL;
         a = (L + k * tailLen) / total;
-        r = pedR + (maxR * v.tailSpread - pedR) * Math.pow(smoothstep(0, 0.85, k), 0.75);
+        r = pedR + (maxR * v.tailSpread - pedR) * TAIL_SPREAD[i - J_BODY];
         lag = k * v.tailBend * 1.6;
       }
       const off = this.amp * (0.1 + 0.9 * a * a) * Math.sin(TAU * v.waveK * a - this.phase - lag);
@@ -614,7 +638,8 @@ export class Koi {
       maxX = Math.max(maxX, j[i * 3] + r);
       maxY = Math.max(maxY, j[i * 3 + 1] + r);
     }
-    for (const fin of [this.pecL, this.pecR]) {
+    for (let f = 0; f < 2; f++) {
+      const fin = f ? this.pecR : this.pecL;
       for (let k = 0; k < 4; k += 2) {
         minX = Math.min(minX, fin[k] - this.pecMax);
         minY = Math.min(minY, fin[k + 1] - this.pecMax);
