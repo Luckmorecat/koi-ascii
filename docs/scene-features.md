@@ -32,7 +32,7 @@ Something drawn over everything at its own positions, like the fireflies, is a s
 ## The material
 
 - `src/shaders/common.glsl`: a new `M_*` material ID, which the scene pass writes and the glow and ASCII passes read.
-- `src/shaders/glow.frag`: its weight in `emission()`; leave it out and the material gives no glow.
+- `src/shaders/emission.glsl`: its weight in `emission()`; leave it out and the material gives no glow.
 - `src/shaders/scene/glyphs.glsl`: its glyphs in `pickGlyph()`. A new character goes last in `GLYPHS` (`src/glyphs.ts`), so every glyph before it keeps its atlas index.
 
 ## The colour

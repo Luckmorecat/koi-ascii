@@ -4,6 +4,8 @@ import rippleSrc from './shaders/ripple.frag?raw';
 import { sceneLines, sceneSrc } from './shaders/scene';
 import asciiSrc from './shaders/ascii.frag?raw';
 import glowSrc from './shaders/glow.frag?raw';
+import emissionFnSrc from './shaders/emission.glsl?raw';
+import emissionSrc from './shaders/emission.frag?raw';
 import flyVertSrc from './shaders/fly.vert?raw';
 import flyFragSrc from './shaders/fly.frag?raw';
 import { Program } from './gl/program';
@@ -38,8 +40,9 @@ const FLIES_MIN = 0.02;
  *  1. ripple — wave equation on a coarse grid (ping-pong)
  *  2. scene  — one fragment per character cell → colour and glyph; then the
  *              fireflies as one point each into the same cells, over the fish
- *  3. glow   — one fragment per cell → blurred halo of the bright cells
- *              (skipped on software renderers: no target, no program)
+ *  3. glow   — one fragment per cell → blurred halo of the bright cells,
+ *              from each cell's emission, stored first where float targets
+ *              exist (skipped on software renderers: no target, no program)
  *  4. ascii  — per screen pixel, copy the cell's glyph from the atlas
  */
 export class Renderer {
@@ -68,6 +71,9 @@ export class Renderer {
   private readonly sceneProg: Program;
   private readonly asciiProg: Program;
   private readonly glowProg: Program | null;
+  /** Each cell's emission for the glow pass; null without float32 targets (glow works it out per tap). */
+  private readonly emissionProg: Program | null;
+  private readonly emissionFormat: TexFormat;
   private readonly flyProg: Program;
   /** Vertex array and buffer for the fireflies: one vec4 per point (fireflies.ts). */
   private readonly flyVao: WebGLVertexArrayObject;
@@ -84,6 +90,7 @@ export class Renderer {
   private ripple: [Target, Target] | null = null;
   private scene: Target | null = null;
   private glowTarget: Target | null = null;
+  private emissionTarget: Target | null = null;
   private rippleClock = 0;
   private devW = 1;
   private devH = 1;
@@ -112,6 +119,19 @@ export class Renderer {
     this.ripplePacked = packed;
     this.rippleFormat = packed ? { internal: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE } : half;
 
+    // Each cell's emission goes to a float32 target once per frame for the glow
+    // pass to read; float32 keeps every bit (half floats would round), so
+    // without it the glow pass works emission out per tap instead.
+    this.emissionFormat = { internal: gl.RGBA32F, format: gl.RGBA, type: gl.FLOAT };
+    let emission = false;
+    if (!software && gl.getExtension('EXT_color_buffer_float')) {
+      const probe = createTarget(gl, 4, 4, [this.emissionFormat]);
+      if (probe) {
+        deleteTarget(gl, probe);
+        emission = true;
+      }
+    }
+
     const defines = layoutDefines() + glyphDefines() + varietyDefines() + (packed ? '#define RIPPLE_PACKED\n' : '');
     const fragment = (src: string) => `#version 300 es\n${defines}${commonSrc}\n${src}`;
     const vertex = `#version 300 es\n${vertexSrc}`;
@@ -120,7 +140,10 @@ export class Renderer {
     const sceneAt = fragment('').split('\n').length;
     const sceneFiles = sceneLines.map(({ name, line }) => ({ name, line: line + sceneAt - 1 }));
     this.sceneProg = new Program(gl, vertex, fragment(sceneSrc), 'scene', sceneFiles);
-    this.glowProg = software ? null : new Program(gl, vertex, fragment(glowSrc), 'glow');
+    this.emissionProg = emission ? new Program(gl, vertex, fragment(`${emissionFnSrc}\n${emissionSrc}`), 'emission') : null;
+    // Without the emission pass, glow.frag gets emission() from emission.glsl.
+    const glow = emission ? `#define EMIT_TEX\n${glowSrc}` : `${emissionFnSrc}\n${glowSrc}`;
+    this.glowProg = software ? null : new Program(gl, vertex, fragment(glow), 'glow');
     this.asciiProg = new Program(gl, vertex, fragment((software ? '' : '#define GLOW\n') + asciiSrc), 'ascii');
     this.flyProg = new Program(gl, `#version 300 es\n${commonSrc}\n${flyVertSrc}`, fragment(flyFragSrc), 'fly');
 
@@ -197,12 +220,18 @@ export class Renderer {
       this.scene = createTarget(gl, cols, rows, [rgba8, rgba8]);
       if (!this.scene) throw new Error('Scene render target is not supported');
       if (this.glowTarget) deleteTarget(gl, this.glowTarget);
+      if (this.emissionTarget) deleteTarget(gl, this.emissionTarget);
       // Linear, so the ASCII pass reads a smooth halo across cell borders.
       this.glowTarget = null;
+      this.emissionTarget = null;
       if (this.glowProg) {
         // The ascii program samples uGlow whenever it was compiled with GLOW.
         this.glowTarget = createTarget(gl, cols, rows, [rgba8], gl.LINEAR);
         if (!this.glowTarget) throw new Error('Glow render target is not supported');
+      }
+      if (this.emissionProg) {
+        this.emissionTarget = createTarget(gl, cols, rows, [this.emissionFormat]);
+        if (!this.emissionTarget) throw new Error('Emission render target is not supported');
       }
       this.cols = cols;
       this.rows = rows;
@@ -351,11 +380,21 @@ export class Renderer {
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
     } else if (glowProg && this.glowTarget) {
+      // Each cell's emission once, for the 45 taps of the blur below.
+      const emission = this.emissionTarget;
+      if (this.emissionProg && emission) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, emission.fbo);
+        this.emissionProg
+          .use()
+          .texture('uScene0', 0, scene.textures[0])
+          .texture('uScene1', 1, scene.textures[1]);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      }
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowTarget.fbo);
+      glowProg.use();
+      if (emission) glowProg.texture('uEmit', 0, emission.textures[0]);
+      else glowProg.texture('uScene0', 0, scene.textures[0]).texture('uScene1', 1, scene.textures[1]);
       glowProg
-        .use()
-        .texture('uScene0', 0, scene.textures[0])
-        .texture('uScene1', 1, scene.textures[1])
         .ivec2('uGrid', this.cols, this.rows)
         .float('uAspect', atlas.cellW / atlas.cellH)
         .float('uGain', light.glowStrength * GLOW_GAIN);
