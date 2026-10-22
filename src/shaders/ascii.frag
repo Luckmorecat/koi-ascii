@@ -79,8 +79,12 @@ void main() {
   bg += texture(uGlow, (vec2(q) + 0.5) * uGlowScale).rgb;
 #endif
   vec3 c = mix(bg, s0.rgb, ink);
-  if (uLook == 1) c = ramp(c);
-  else if (uLook == 2) c = clamp(filtered(c), 0.0, 1.0);
-  if (uIntensity < 1.0) c = mix(uOutBg, c, uIntensity);
+  // One uniform branch around the look, so the plain pond skips it in a single
+  // jump (on its own, the small intensity mix was flattened into every pixel).
+  if (uLook != 0 || uIntensity < 1.0) {
+    if (uLook == 1) c = ramp(c);
+    else if (uLook == 2) c = clamp(filtered(c), 0.0, 1.0);
+    if (uIntensity < 1.0) c = mix(uOutBg, c, uIntensity);
+  }
   fragColor = vec4(c, 1.0);
 }
