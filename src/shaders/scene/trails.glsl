@@ -8,6 +8,32 @@ uniform vec3 uSilk;
 uniform vec3 uBubble;
 uniform vec3 uGoldDust;
 
+// One trail segment A -> B: keeps it when it is live and the strongest so far.
+void trailSeg(vec2 p, vec4 A, vec4 B, float w0, bool live, int variety,
+              inout float best, inout vec2 bestDir, inout int bestVariety) {
+  vec2 ab = B.xy - A.xy;
+  vec2 ap = p - A.xy;
+  float t = clamp(dot(ap, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+  float dist = length(ap - ab * t);
+  float age = mix(A.z, B.z, t);
+  float w = w0 * (0.5 + 1.4 * age) + 0.3 * min(uCell.x, uCell.y);
+  float I = pow(1.0 - age, 1.3) * (1.0 - smoothstep(w * 0.35, w, dist));
+  if (live && I > best) {
+    best = I;
+    bestDir = ab;
+    bestVariety = variety;
+  }
+}
+
+// trails() walks a chunk's segments four per trip. The last chunk's last trip
+// fetches T_TRAIL + TRAIL_CHUNKS * TRAIL_CHUNK, which must stay in the fish row.
+#if TRAIL_CHUNK % 4 != 0
+#error trails.glsl unrolls by 4
+#endif
+#if TRAIL_CHUNKS * TRAIL_CHUNK > TRAIL_N + TRAIL_CHUNKS - 1
+#error trails.glsl fetches past the fish row
+#endif
+
 void trails(vec2 p, inout Cell c) {
   float best = 0.0;
   vec2 bestDir = vec2(1.0, 0.0);
@@ -28,23 +54,19 @@ void trails(vec2 p, inout Cell c) {
       if (k0 >= n) break;
       if (!inBox(p, F(f, T_CBOX + ch), pad)) continue;
       vec4 A = F(f, T_TRAIL + k0 - 1);
-      for (int j = 0; j < TRAIL_CHUNK; j++) {
+      for (int j = 0; j < TRAIL_CHUNK; j += 4) {
         int k = k0 + j;
         if (k >= n) break;
-        vec4 B = F(f, T_TRAIL + k);
-        vec2 ab = B.xy - A.xy;
-        vec2 ap = p - A.xy;
-        float t = clamp(dot(ap, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
-        float dist = length(ap - ab * t);
-        float age = mix(A.z, B.z, t);
-        float w = w0 * (0.5 + 1.4 * age) + 0.3 * min(uCell.x, uCell.y);
-        float I = pow(1.0 - age, 1.3) * (1.0 - smoothstep(w * 0.35, w, dist));
-        if (I > best) {
-          best = I;
-          bestDir = ab;
-          bestVariety = variety;
-        }
-        A = B;
+        // Four independent fetches per trip let their latency overlap. Texels
+        // past n are stale samples or chunk boxes, finite, and their segments
+        // are discarded.
+        vec4 B0 = F(f, T_TRAIL + k), B1 = F(f, T_TRAIL + k + 1);
+        vec4 B2 = F(f, T_TRAIL + k + 2), B3 = F(f, T_TRAIL + k + 3);
+        trailSeg(p, A, B0, w0, true, variety, best, bestDir, bestVariety);
+        trailSeg(p, B0, B1, w0, k + 1 < n, variety, best, bestDir, bestVariety);
+        trailSeg(p, B1, B2, w0, k + 2 < n, variety, best, bestDir, bestVariety);
+        trailSeg(p, B2, B3, w0, k + 3 < n, variety, best, bestDir, bestVariety);
+        A = B3;
       }
     }
   }
