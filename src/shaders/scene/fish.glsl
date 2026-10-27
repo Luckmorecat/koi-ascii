@@ -23,6 +23,11 @@ Hit polyline(int f, int i0, int count, vec2 p) {
   h.u = 0.0;
   h.v = 0.0;
   h.n = vec2(1.0, 0.0);
+  // The closest segment's values are kept by selects, not an if, so the loop
+  // body stays one block and the joint fetches can all issue up front; h.v and
+  // h.n are built from them once, after the loop.
+  float bu = 0.0, br = 0.0;
+  vec2 bdq = vec2(0.0), bab = vec2(0.0), bap = vec2(0.0);
   vec4 A = F(f, i0);
   for (int k = 0; k < count; k++) {
     vec4 B = F(f, i0 + k + 1);
@@ -33,14 +38,23 @@ Hit polyline(int f, int i0, int count, vec2 p) {
     float dist = length(dq);
     float r = mix(A.z, B.z, t);
     float d = dist - r;
-    if (d < h.d) {
-      h.d = d;
-      h.u = (float(k) + t) / float(count);
-      float side = ab.x * ap.y - ab.y * ap.x < 0.0 ? -1.0 : 1.0;
-      h.v = side * dist / max(r, 1e-3);
-      h.n = dist > 1e-4 ? dq / dist : normalize(vec2(-ab.y, ab.x) + 1e-6);
-    }
+    bool w = d < h.d;
+    h.d = w ? d : h.d;
+    bu = w ? (float(k) + t) / float(count) : bu;
+    br = w ? r : br;
+    bdq = w ? dq : bdq;
+    bab = w ? ab : bab;
+    bap = w ? ap : bap;
     A = B;
+  }
+  // h.d < 1e9 once a segment won; with NaN joints none does and h keeps its
+  // defaults.
+  if (h.d < 1e9) {
+    float dist = length(bdq);
+    h.u = bu;
+    float side = bab.x * bap.y - bab.y * bap.x < 0.0 ? -1.0 : 1.0;
+    h.v = side * dist / max(br, 1e-3);
+    h.n = dist > 1e-4 ? bdq / dist : normalize(vec2(-bab.y, bab.x) + 1e-6);
   }
   return h;
 }
