@@ -39,7 +39,8 @@ const FLIES_MIN = 0.02;
 /**
  * Four passes per frame:
  *  1. ripple — wave equation on a coarse grid (ping-pong)
- *  2. scene  — one fragment per character cell → colour and glyph; then the
+ *  2. scene  — one fragment per character cell → colour and glyph, in two
+ *              draws (the water and all on it, then the fish); then the
  *              fireflies as one point each into the same cells, over the fish
  *  3. glow   — one fragment per cell → blurred halo of the bright cells,
  *              from each cell's emission, stored first where float targets
@@ -346,7 +347,15 @@ export class Renderer {
       .vec2('uView', this.devW / this.dpr, this.devH / this.dpr)
       .vec4('uMoon', light.moon.pos[0], light.moon.pos[1], light.moon.radius, this.sky.moon ? light.moon.alpha : 0)
       .vec4('uSun', light.sun.pos[0], light.sun.pos[1], light.sun.radius, this.sky.sun ? light.sun.alpha : 0);
+    // Two draws, so the waves that run the fish no longer also run the water
+    // under them: every cell's water and all on it, then the fish over that
+    // (main.frag discards the cells no fish claims).
+    sp.int('uLayer', 0).int('uFishDraw', 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (count > 0) {
+      sp.int('uLayer', 1).int('uFishDraw', count);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
 
     // Fireflies: one point each, written over the scene's cells (fish too).
     // Outside their dusk window, or off, nothing is drawn.

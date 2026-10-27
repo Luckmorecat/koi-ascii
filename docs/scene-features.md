@@ -23,7 +23,7 @@ The scene pass is the chunks in `src/shaders/scene/`, joined in the order `index
 
 - A new feature gets a chunk of its own (or joins one of the same domain, as stars, moon and sun share `sky.glsl`), listed in `index.ts` after every chunk it depends on.
 - Its header says what it draws, the uniforms it reads and the chunks it depends on; copy the form from a neighbour.
-- `main.frag` calls it where it layers: after `water()` and before the fish for something on the water, after `drawFish()` for something over them.
+- `main.frag` calls it where it layers: after `water()` and before the fish for something on the water, after `drawFish()` for something over them. The fish are a second draw (`uLayer` 1) that starts each cell unclaimed and keeps only the cells it claims, so what draws there writes every `Cell` field and never reads the one under it.
 - A compile error names the chunk and line (`sky.glsl:42`).
 - `test/shader-size.test.ts` keeps every shader file within 250 lines and checks the headers.
 
