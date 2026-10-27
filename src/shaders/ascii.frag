@@ -39,7 +39,19 @@ vec3 ramp(vec3 pix) {
   float t = clamp((lum(pix) - lum(uBg)) / (0.9 - lum(uBg)), 0.0, 1.0);
   float x = t * float(uStopCount - 1);
   int i = min(int(x), uStopCount - 2);
-  return mix(uStops[i], uStops[i + 1], x - float(i));
+  // Not uStops[i]: a per-pixel index into a uniform array is a per-lane load
+  // at the end of the chain. The stop-count tests are uniform branches and the
+  // stops sit at fixed indices, so the preset ramps (3 stops) run one compare
+  // and its selects.
+  vec3 a = uStops[0], b = uStops[1];
+  if (uStopCount > 2) {
+    if (i >= 1) { a = uStops[1]; b = uStops[2]; }
+    if (uStopCount > 3) {
+      if (i >= 2) { a = uStops[2]; b = uStops[3]; }
+      if (uStopCount > 4 && i >= 3) { a = uStops[3]; b = uStops[4]; }
+    }
+  }
+  return mix(a, b, x - float(i));
 }
 
 // Filter: the pond's signal above its own background, laid over the new one
