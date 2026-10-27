@@ -33,6 +33,9 @@ const FONT_MAX = 22;
 const FONT_MIN_DEVICE = 11;
 /** Halo brightness at glowStrength 1; kept low so glyphs never wash into blobs. */
 const GLOW_GAIN = 2.2;
+/** Halo blur reach in cells either side: columns, rows (RX, RY in glow.frag). */
+const GLOW_RX = 4;
+const GLOW_RY = 2;
 /** Firefly window weight below which no point is drawn (fly.vert's FLY_MIN then hides each one anyway). */
 const FLIES_MIN = 0.02;
 
@@ -134,7 +137,12 @@ export class Renderer {
       }
     }
 
-    const defines = layoutDefines() + glyphDefines() + varietyDefines() + (packed ? '#define RIPPLE_PACKED\n' : '');
+    const defines =
+      layoutDefines() +
+      glyphDefines() +
+      varietyDefines() +
+      `#define RX ${GLOW_RX}\n#define RY ${GLOW_RY}\n` +
+      (packed ? '#define RIPPLE_PACKED\n' : '');
     const fragment = (src: string) => `#version 300 es\n${defines}${commonSrc}\n${src}`;
     const vertex = `#version 300 es\n${vertexSrc}`;
     this.rippleProg = new Program(gl, vertex, fragment(rippleSrc), 'ripple');
@@ -232,7 +240,10 @@ export class Renderer {
         if (!this.glowTarget) throw new Error('Glow render target is not supported');
       }
       if (this.emissionProg) {
-        this.emissionTarget = createTarget(gl, cols, rows, [this.emissionFormat]);
+        // The cells sit inside a border as wide as the blur's reach, so the
+        // glow pass's off-grid taps read 0 instead of clamping. Created
+        // zero-filled; nothing may ever draw to or clear the border.
+        this.emissionTarget = createTarget(gl, cols + 2 * GLOW_RX, rows + 2 * GLOW_RY, [this.emissionFormat]);
         if (!this.emissionTarget) throw new Error('Emission render target is not supported');
       }
       this.cols = cols;
@@ -394,11 +405,13 @@ export class Renderer {
       const emission = this.emissionTarget;
       if (this.emissionProg && emission) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, emission.fbo);
+        gl.viewport(GLOW_RX, GLOW_RY, this.cols, this.rows);
         this.emissionProg
           .use()
           .texture('uScene0', 0, scene.textures[0])
           .texture('uScene1', 1, scene.textures[1]);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.viewport(0, 0, this.cols, this.rows);
       }
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowTarget.fbo);
       glowProg.use();

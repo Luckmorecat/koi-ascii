@@ -4,20 +4,19 @@
 // texture fetch. Cells are about twice as tall as wide, so the kernel spans
 // twice as many columns as rows to stay round on screen.
 
-uniform ivec2 uGrid;   // cols, rows
+uniform ivec2 uGrid;   // cols, rows; read only without EMIT_TEX
 uniform float uAspect; // cell width / cell height
 uniform float uGain;   // time-of-day glow strength × overall gain
 
 out vec4 oGlow;
 
-#define RX 4
-#define RY 2
+// RX, RY: the kernel's reach in cells either side, from the renderer.
 
 #ifdef EMIT_TEX
-// Each cell's emission() (emission.glsl), stored by the emission pass.
+// Each cell's emission() (emission.glsl), stored by the emission pass inside
+// a zero border RX columns and RY rows wide, so off-grid taps add nothing.
 // Without EMIT_TEX the renderer puts emission.glsl in front of this file.
 uniform sampler2D uEmit;
-vec4 emission(ivec2 cell) { return texelFetch(uEmit, cell, 0); }
 #endif
 
 void main() {
@@ -30,12 +29,17 @@ void main() {
       vec2 d = vec2(float(x) * uAspect, float(y));
       float k = exp(-dot(d, d) * 0.6);
       wsum += k;
+#ifdef EMIT_TEX
+      vec4 e = texelFetch(uEmit, cell + ivec2(x + RX, y + RY), 0);
+      sum += e.rgb * e.a * k;
+#else
       ivec2 n = cell + ivec2(x, y);
       // Fetch every tap, clamped into the grid, and drop the off-grid ones at
       // the add: skipping before the fetches would keep them from batching.
       ivec2 nc = clamp(n, ivec2(0), uGrid - 1);
       vec4 e = emission(nc);
       if (all(equal(n, nc))) sum += e.rgb * e.a * k;
+#endif
     }
   }
   // Soft knee: dense glints (a dusk crest) saturate toward ~0.4 instead of
