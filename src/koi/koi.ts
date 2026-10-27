@@ -53,6 +53,22 @@ function wrapAngle(a: number): number {
 /** Frame-rate independent smoothing factor. */
 const ease = (rate: number, dt: number) => 1 - Math.exp(-rate * dt);
 
+/**
+ * Math.hypot(x, y) to the bit, but inlinable: V8 never inlines its builtin, so
+ * each call boxes both arguments and the result as heap numbers. For two
+ * arguments the builtin's normalised Kahan sum comes down to this.
+ */
+function hypot(x: number, y: number): number {
+  const ax = Math.abs(x);
+  const ay = Math.abs(y);
+  if (ax === Infinity || ay === Infinity) return Infinity;
+  if (ax !== ax || ay !== ay) return NaN;
+  const hi = ax > ay ? ax : ay;
+  if (hi === 0) return 0;
+  const q = (ax > ay ? ay : ax) / hi;
+  return Math.sqrt(1 + q * q) * hi;
+}
+
 export type Mode = 'cruise' | 'burst' | 'glide' | 'hover' | 'flee';
 
 export interface Pointer {
@@ -252,13 +268,13 @@ export class Koi {
     const t = w.time;
     const ptr = w.pointer;
     const ptrActive = (ptr.inside || ptr.linger) && t - ptr.lastMove < v.attention;
-    const pd = ptrActive ? Math.hypot(ptr.x - this.x, ptr.y - this.y) : Infinity;
+    const pd = ptrActive ? hypot(ptr.x - this.x, ptr.y - this.y) : Infinity;
 
     // --- reactions to taps and sudden pointer motion
     for (const tap of w.taps) {
       if (tap.t <= this.lastTap) continue;
       this.lastTap = tap.t;
-      const d = Math.hypot(tap.x - this.x, tap.y - this.y);
+      const d = hypot(tap.x - this.x, tap.y - this.y);
       if (!w.calm && d < w.unit * 0.55 * v.skittish) {
         this.startle(tap.x, tap.y, t, w);
       } else if (v.roams && d < w.unit * 1.5) {
@@ -309,14 +325,14 @@ export class Koi {
     else if (ax > w.width - margin) sx -= ((ax - (w.width - margin)) / margin) * 3;
     if (ay < margin) sy += ((margin - ay) / margin) * 3;
     else if (ay > w.height - margin) sy -= ((ay - (w.height - margin)) / margin) * 3;
-    const wallK = Math.hypot(sx - sx0, sy - sy0);
+    const wallK = hypot(sx - sx0, sy - sy0);
 
     // Personal space from fish at a similar depth; deeper/shallower ones can pass over.
     for (const o of w.fish) {
       if (o === this) continue;
       const dx = this.x - o.x;
       const dy = this.y - o.y;
-      const d = Math.hypot(dx, dy);
+      const d = hypot(dx, dy);
       const range = (L + o.length) * 0.5;
       const dz = Math.abs(this.depth - o.depth);
       if (d > 1e-3 && d < range && dz < 0.3) {
@@ -357,7 +373,7 @@ export class Koi {
         // Somewhere worth swimming to, not right under its nose.
         const pick = () => ({ x: w.width * this.rng.range(0.15, 0.85), y: w.height * this.rng.range(0.15, 0.85) });
         let poi = pick();
-        for (let k = 0; k < 6 && Math.hypot(poi.x - this.x, poi.y - this.y) < 0.35 * w.unit; k++) poi = pick();
+        for (let k = 0; k < 6 && hypot(poi.x - this.x, poi.y - this.y) < 0.35 * w.unit; k++) poi = pick();
         this.poi = poi;
         this.poiUntil = t + this.rng.range(8, 14);
       }
@@ -372,7 +388,7 @@ export class Koi {
     if (tw !== 0) {
       const dx = tx - this.x;
       const dy = ty - this.y;
-      td = Math.hypot(dx, dy);
+      td = hypot(dx, dy);
       if (td > 1e-3) {
         // Stop chasing a target that is already under the nose, or the fish coils around it.
         const near = tw > 0 ? smoothstep(L * 0.25, L * 0.6, td) : 1;
@@ -481,7 +497,7 @@ export class Koi {
   private startle(x: number, y: number, t: number, w: World): void {
     const dx = this.x - x;
     const dy = this.y - y;
-    const d = Math.hypot(dx, dy) || 1;
+    const d = hypot(dx, dy) || 1;
     this.fleeX = dx / d;
     this.fleeY = dy / d;
     this.mode = 'flee';
@@ -512,7 +528,7 @@ export class Koi {
       const maxBend = i < J_BODY ? v.bodyBend : v.tailBend;
       let dx = s[i * 2] - s[i * 2 - 2];
       let dy = s[i * 2 + 1] - s[i * 2 - 1];
-      const d = Math.hypot(dx, dy);
+      const d = hypot(dx, dy);
       if (d < 1e-6) {
         dx = px;
         dy = py;
@@ -562,7 +578,7 @@ export class Koi {
       const i1 = Math.min(i + 1, J_TOTAL - 1);
       let tx = s[i1 * 2] - s[i0 * 2];
       let ty = s[i1 * 2 + 1] - s[i0 * 2 + 1];
-      const tl = Math.hypot(tx, ty) || 1;
+      const tl = hypot(tx, ty) || 1;
       tx /= tl;
       ty /= tl;
       let a: number;
@@ -610,7 +626,7 @@ export class Koi {
         tipY = lerp(out[3], tipY, k);
         const lx = tipX - rx;
         const ly = tipY - ry;
-        const ll = Math.hypot(lx, ly) || 1;
+        const ll = hypot(lx, ly) || 1;
         tipX = rx + (lx / ll) * finLen;
         tipY = ry + (ly / ll) * finLen;
       }
@@ -664,7 +680,7 @@ export class Koi {
     const b = Math.min(i + 2, J_BODY - 1);
     let bx = j[b * 3] - j[a * 3];
     let by = j[b * 3 + 1] - j[a * 3 + 1];
-    const bl = Math.hypot(bx, by) || 1;
+    const bl = hypot(bx, by) || 1;
     bx /= bl;
     by /= bl;
     return {
