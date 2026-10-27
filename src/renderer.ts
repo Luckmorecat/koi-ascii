@@ -3,6 +3,7 @@ import commonSrc from './shaders/common.glsl?raw';
 import rippleSrc from './shaders/ripple.frag?raw';
 import { sceneLines, sceneSrc } from './shaders/scene';
 import asciiSrc from './shaders/ascii.frag?raw';
+import asciiVertSrc from './shaders/ascii.vert?raw';
 import glowSrc from './shaders/glow.frag?raw';
 import emissionFnSrc from './shaders/emission.glsl?raw';
 import emissionSrc from './shaders/emission.frag?raw';
@@ -144,7 +145,7 @@ export class Renderer {
     // Without the emission pass, glow.frag gets emission() from emission.glsl.
     const glow = emission ? `#define EMIT_TEX\n${glowSrc}` : `${emissionFnSrc}\n${glowSrc}`;
     this.glowProg = software ? null : new Program(gl, vertex, fragment(glow), 'glow');
-    this.asciiProg = new Program(gl, vertex, fragment((software ? '' : '#define GLOW\n') + asciiSrc), 'ascii');
+    this.asciiProg = new Program(gl, `#version 300 es\n${asciiVertSrc}`, fragment((software ? '' : '#define GLOW\n') + asciiSrc), 'ascii');
     this.flyProg = new Program(gl, `#version 300 es\n${commonSrc}\n${flyVertSrc}`, fragment(flyFragSrc), 'fly');
 
     const vao = gl.createVertexArray();
@@ -412,6 +413,7 @@ export class Renderer {
       .texture('uScene0', 0, scene.textures[0])
       .texture('uScene1', 1, scene.textures[1])
       .texture('uAtlas', 2, atlas.texture)
+      .vec2('uDev', this.devW, this.devH)
       .ivec2('uCellPx', atlas.cellW, atlas.cellH)
       .ivec2('uOrigin', this.originX, this.originY)
       .ivec2('uGrid', this.cols, this.rows)

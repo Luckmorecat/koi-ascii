@@ -26,6 +26,7 @@ uniform vec2 uGlowScale;  // grid px → glow texture coordinates
 uniform int uGlowOn;      // 0 when the renderer cleared the halo instead of drawing it
 #endif
 
+in vec2 vPx; // gl_FragCoord.xy, from ascii.vert
 out vec4 fragColor;
 
 // Rec.601 luma on sRGB values: what the ramp and filter were tuned with (from
@@ -57,7 +58,9 @@ vec3 filtered(vec3 pix) {
 }
 
 void main() {
-  ivec2 q = ivec2(int(gl_FragCoord.x), uCanvasH - 1 - int(gl_FragCoord.y)) - uOrigin;
+  // vPx is off pixel centres by far less than the 0.5 px int() would need to
+  // land on another pixel, so q is the pixel gl_FragCoord would give.
+  ivec2 q = ivec2(int(vPx.x), uCanvasH - 1 - int(vPx.y)) - uOrigin;
   if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, uGrid * uCellPx))) {
     fragColor = vec4(uRaw == 1 ? uRawBg : uOutBg, 1.0);
     return;
