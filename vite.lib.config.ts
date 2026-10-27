@@ -2,11 +2,12 @@ import { defineConfig, type Plugin } from 'vite';
 
 /**
  * Ships the `?raw` shaders without their `//` comments, a third of the GLSL
- * text. GLSL reads a comment as whitespace, so the compiled shaders are
- * unchanged, and every line break stays, so compile errors still name
- * `file:line` (src/shaders/scene/index.ts). The demo serves them the same
- * way; the unit tests read the files as written (test/shader-size.test.ts
- * checks the chunk headers).
+ * text, or the spaces that start and end each line. GLSL needs whitespace
+ * only between tokens and reads a comment as a space, so the compiled
+ * shaders are unchanged, and every line break stays, so compile errors still
+ * name `file:line` (src/shaders/scene/index.ts). The demo serves them the
+ * same way; the unit tests read the files as written
+ * (test/shader-size.test.ts checks the chunk headers).
  */
 export function stripGlslComments(): Plugin {
   return {
@@ -21,10 +22,14 @@ export function stripGlslComments(): Plugin {
       // Line by line is exact for `//` comments only: a /* */ one can span
       // lines, and one ending in `\` runs on into the next.
       if (src.includes('/*')) throw fail('has a /* */ comment');
-      const stripped = src.replace(/[ \t]*\/\/.*$/gm, (comment) => {
+      const uncommented = src.replace(/[ \t]*\/\/.*$/gm, (comment) => {
         if (comment.endsWith('\\')) throw fail('has a // comment ending in \\');
         return '';
       });
+      // Outside comments a `\` can only continue a line, and that would
+      // join `a\` and an indented `b` into `ab`.
+      if (uncommented.includes('\\')) throw fail('has a \\ line continuation');
+      const stripped = uncommented.replace(/^[ \t]+|[ \t]+$/gm, '');
       return { code: `export default ${JSON.stringify(stripped)}`, map: null };
     },
   };
