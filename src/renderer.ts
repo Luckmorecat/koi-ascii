@@ -299,17 +299,19 @@ export class Renderer {
     steps = Math.min(steps, 3);
     const rp = this.rippleProg.use();
     rp.ivec2('uSize', this.simW, this.simH).float('uDamping', RIPPLE_DAMPING);
-    let ripple = this.ripple;
+    // Swapped in place: ripple[0] always holds the latest state.
+    const ripple = this.ripple;
     for (let s = 0; s < steps; s++) {
-      const [src, dst] = ripple;
+      const src = ripple[0];
+      const dst = ripple[1];
       gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fbo);
       gl.viewport(0, 0, this.simW, this.simH);
       rp.texture('uState', 0, src.textures[0]);
       rp.int('uDropCount', s === 0 ? this.takeDrops(pond) : 0).vec4s('uDrops', this.dropBuf);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
-      ripple = [dst, src];
+      ripple[0] = dst;
+      ripple[1] = src;
     }
-    this.ripple = ripple;
 
     // 2. Scene at one fragment per character cell.
     const count = pond.pack();
@@ -339,11 +341,11 @@ export class Renderer {
       // Wraps every ~18 h; float32 keeps ~8 ms resolution at the top of the range.
       .float('uTime', pond.time % 65536)
       // Time-of-day lighting, all derived on the CPU from the phase.
-      .vec3('uLightDir', ...light.dir)
-      .vec3('uLightCol', ...sceneLight.color)
-      .vec3('uAmbient', ...sceneLight.ambient)
-      .vec3('uWaterTint', ...sceneLight.water)
-      .vec3('uSky', ...sceneLight.sky)
+      .vec3('uLightDir', light.dir[0], light.dir[1], light.dir[2])
+      .vec3('uLightCol', sceneLight.color[0], sceneLight.color[1], sceneLight.color[2])
+      .vec3('uAmbient', sceneLight.ambient[0], sceneLight.ambient[1], sceneLight.ambient[2])
+      .vec3('uWaterTint', sceneLight.water[0], sceneLight.water[1], sceneLight.water[2])
+      .vec3('uSky', sceneLight.sky[0], sceneLight.sky[1], sceneLight.sky[2])
       .float('uGlint', light.glint)
       .float('uCaustic', light.caustic)
       .float('uFloor', light.floor)
@@ -430,6 +432,7 @@ export class Renderer {
     gl.viewport(0, 0, this.devW, this.devH);
     const look = asciiLook(palette, light);
     const filter = palette.mode === 'filter' ? palette : null;
+    const tint = filter?.tint ?? WHITE;
     const ascii = this.asciiProg
       .use()
       .texture('uScene0', 0, scene.textures[0])
@@ -440,14 +443,14 @@ export class Renderer {
       .ivec2('uOrigin', this.originX, this.originY)
       .ivec2('uGrid', this.cols, this.rows)
       .int('uCanvasH', this.devH)
-      .vec3('uBg', ...look.bg)
-      .vec3('uRawBg', ...POND_BG)
+      .vec3('uBg', look.bg[0], look.bg[1], look.bg[2])
+      .vec3('uRawBg', POND_BG[0], POND_BG[1], POND_BG[2])
       .int('uRaw', this.raw ? 1 : 0)
       .int('uLook', look.look)
-      .vec3('uOutBg', ...look.outBg)
+      .vec3('uOutBg', look.outBg[0], look.outBg[1], look.outBg[2])
       .vec3s('uStops', this.stopBuf)
       .int('uStopCount', palette.mode === 'ramp' ? palette.stops.length : 2)
-      .vec3('uTint', ...(filter?.tint ?? WHITE))
+      .vec3('uTint', tint[0], tint[1], tint[2])
       .float('uSaturation', filter?.saturation ?? 1)
       .int('uInvert', filter?.invert ? 1 : 0)
       .float('uIntensity', this.raw ? 1 : this.intensity);
@@ -463,13 +466,18 @@ export class Renderer {
 
   /** Moves up to MAX_DROPS pending impulses into the uniform buffer, in sim texels. */
   private takeDrops(pond: Pond): number {
-    const batch = pond.drops.splice(0, MAX_DROPS);
-    batch.forEach((d, i) => {
+    const drops = pond.drops;
+    const n = Math.min(drops.length, MAX_DROPS);
+    for (let i = 0; i < n; i++) {
+      const d = drops[i];
       this.dropBuf[i * 4] = d.x / RIPPLE_PX;
       this.dropBuf[i * 4 + 1] = d.y / RIPPLE_PX;
       this.dropBuf[i * 4 + 2] = Math.max(d.r / RIPPLE_PX, 1.5);
       this.dropBuf[i * 4 + 3] = d.a;
-    });
-    return batch.length;
+    }
+    // The rest move up to the front, still oldest first.
+    drops.copyWithin(0, n);
+    drops.length -= n;
+    return n;
   }
 }

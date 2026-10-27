@@ -197,14 +197,26 @@ export class Pond implements World {
       }
       d.set(k.pecL, row + T_PEC_L * 4);
       d.set(k.pecR, row + T_PEC_R * 4);
-      d.set([k.pecRoot, k.pecMax, k.length * k.variety.tailLength, k.variety.tailFork], row + T_FIN * 4);
+      const fin = row + T_FIN * 4;
+      d[fin] = k.pecRoot;
+      d[fin + 1] = k.pecMax;
+      d[fin + 2] = k.length * k.variety.tailLength;
+      d[fin + 3] = k.variety.tailFork;
       d.set(k.eyes, row + T_EYE * 4);
-      d.set([k.variety.id, k.patternSeed, k.eyeRadius, k.depth], row + T_P0 * 4);
+      const p0 = row + T_P0 * 4;
+      d[p0] = k.variety.id;
+      d[p0 + 1] = k.patternSeed;
+      d[p0 + 2] = k.eyeRadius;
+      d[p0 + 3] = k.depth;
       d.set(k.bbox, row + T_BBOX * 4);
       const count = k.writeTrail(d, row + T_TRAIL * 4, this.time);
       d.set(k.trailBox, row + T_TBOX * 4);
       d.set(k.trailChunks, row + T_CBOX * 4);
-      d.set([count, k.variety.trailWidth * k.length, 0, 0], row + T_P1 * 4);
+      const p1 = row + T_P1 * 4;
+      d[p1] = count;
+      d[p1 + 1] = k.variety.trailWidth * k.length;
+      d[p1 + 2] = 0;
+      d[p1 + 3] = 0;
     }
     // Deepest first. Two fish normally swap only while their bounds are apart,
     // so one doesn't pop over the other mid-overlap; a clearly deeper fish
