@@ -5,10 +5,10 @@
 // and the first frame. Starts its own servers and browsers and stops them on
 // exit. Prints a table per query and variant on stderr and one JSON report on
 // stdout (per-run raw figures under queries[].raw); exits 1 on page errors.
-// Run it with --experimental-strip-types (it imports test/browser/gpu.ts), and
-// never beside another GPU tool:
+// Run it through `npm run startup` (it imports test/browser/gpu.ts, hence
+// --experimental-strip-types), and never beside another GPU tool:
 //
-//   node --experimental-strip-types scripts/startup.mjs [query…] [--base rev] [--head dir]
+//   npm run startup -- [query…] [--base rev] [--head dir]
 //        [--runs 7] [--size 1280x800] [--dpr 1] [--serve build|dev]
 //        [--mesa-cache fresh|off] [--no-prime] [--browser-arg flag]… [--bundle]
 //

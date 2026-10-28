@@ -5,10 +5,10 @@
 // advances) are all in it. Each run loads the page with ?debug, pins the
 // viewport, reseeds with seed 42 and steps 120 untimed frames, then measures.
 // Starts its own Vite server(s) and stops them on exit. Prints tables on
-// stderr and one JSON report on stdout; exits 1 on page errors. Run it with
-// `node --experimental-strip-types scripts/cpu.mjs` (see shot.mjs for why).
+// stderr and one JSON report on stdout; exits 1 on page errors. Run it through
+// `npm run cpu` (see shot.mjs for why --experimental-strip-types).
 //
-//   node --experimental-strip-types scripts/cpu.mjs [query…] [--base rev] [--head dir]
+//   npm run cpu -- [query…] [--base rev] [--head dir]
 //        [--runs 7] [--frames 600] [--batches 20] [--size 1280x800] [--dpr 1]
 //        [--no-step] [--gpu] [--profile] [--alloc] [--long 3000] [--top 30]
 //        [--out test-results/cpu] [--no-isolate]

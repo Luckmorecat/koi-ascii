@@ -48,6 +48,9 @@
     "shot": "node --experimental-strip-types scripts/shot.mjs",
     "shots": "node --experimental-strip-types scripts/shots.mjs",
     "perf": "node --experimental-strip-types scripts/perf.mjs",
+    "batch": "node --experimental-strip-types scripts/batch.mjs",
+    "cpu": "node --experimental-strip-types scripts/cpu.mjs",
+    "startup": "node --experimental-strip-types scripts/startup.mjs",
     "release:check": "node --experimental-strip-types scripts/release-check.mjs"
   },
   "devDependencies": {
