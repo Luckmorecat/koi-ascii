@@ -56,13 +56,15 @@ const ease = (rate: number, dt: number) => 1 - Math.exp(-rate * dt);
 /**
  * Math.hypot(x, y) to the bit, but inlinable: V8 never inlines its builtin, so
  * each call boxes both arguments and the result as heap numbers. For two
- * arguments the builtin's normalised Kahan sum comes down to this.
+ * arguments the builtin's normalised Kahan sum comes down to this. The NaN case
+ * returns ax + ay, not the global NaN: that load never runs, so TurboFan leaves
+ * it untyped and would box every inlined call's result.
  */
 function hypot(x: number, y: number): number {
   const ax = Math.abs(x);
   const ay = Math.abs(y);
   if (ax === Infinity || ay === Infinity) return Infinity;
-  if (ax !== ax || ay !== ay) return NaN;
+  if (ax !== ax || ay !== ay) return ax + ay;
   const hi = ax > ay ? ax : ay;
   if (hi === 0) return 0;
   const q = (ax > ay ? ay : ax) / hi;
