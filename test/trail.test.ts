@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FISH_TEXELS, T_CBOX, T_P1, T_TRAIL, TRAIL_CHUNK, TRAIL_CHUNKS } from '../src/koi/layout';
+import { FISH_TEXELS, T_CBOX, T_P1, T_TRAIL, TRAIL_CHUNK, TRAIL_CHUNKS, TRAIL_N } from '../src/koi/layout';
 import { Pond } from '../src/pond';
 
 describe('trail chunk boxes', () => {
@@ -37,5 +37,7 @@ describe('trail chunk boxes', () => {
     expect(bad).toEqual([]);
     // Trails grew one sample at a time, so chunks were seen just full and just started.
     for (let n = 2; n <= 3 * TRAIL_CHUNK + 2; n++) expect(counts).toContain(n);
+    // trails.glsl walks chunks while one starts below n, so n past TRAIL_N would read past the fish row.
+    expect(Math.max(...counts)).toBeLessThanOrEqual(TRAIL_N);
   });
 });

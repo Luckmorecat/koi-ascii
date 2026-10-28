@@ -48,10 +48,12 @@ void trails(vec2 p, inout Cell c) {
     if (n < 2 || !inBox(p, F(f, T_TBOX), pad)) continue;
     int variety = int(F(f, T_P0).x + 0.5);
     // Segments come TRAIL_CHUNK to a box (Koi.writeTrail); p outside a box is out
-    // of reach of all its segments, so the chunk is skipped.
-    for (int ch = 0; ch < TRAIL_CHUNKS; ch++) {
+    // of reach of all its segments, so the chunk is skipped. writeTrail keeps
+    // n <= TRAIL_N, so this runs at most TRAIL_CHUNKS times. Bounded by n, not
+    // TRAIL_CHUNKS and a break: a constant bound lets the driver unroll every
+    // chunk body into the program it compiles and links at startup.
+    for (int ch = 0; 1 + ch * TRAIL_CHUNK < n; ch++) {
       int k0 = 1 + ch * TRAIL_CHUNK;
-      if (k0 >= n) break;
       if (!inBox(p, F(f, T_CBOX + ch), pad)) continue;
       vec4 A = F(f, T_TRAIL + k0 - 1);
       for (int j = 0; j < TRAIL_CHUNK; j += 4) {

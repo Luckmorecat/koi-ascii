@@ -35,8 +35,10 @@ void main() {
     sun(p, g, c);
 
     float sh = 0.0;
-    for (int f = 0; f < MAX_FISH; f++) {
-      if (f >= uFishCount) break;
+    // Bounded by the count, not MAX_FISH and a break: a constant bound lets
+    // the driver unroll shadow() four times, and the three extra copies are a
+    // seventh of the program it compiles and links at startup.
+    for (int f = 0; f < uFishCount; f++) {
       sh = max(sh, shadow(f, p));
     }
     c.dens *= clamp(1.0 - 1.4 * sh, 0.0, 1.0);
