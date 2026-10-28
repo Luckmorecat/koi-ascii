@@ -27,7 +27,7 @@ uniform vec2 uGlowScale;  // grid px → glow texture coordinates
 uniform int uGlowOn;      // 0 when the renderer cleared the halo instead of drawing it
 #endif
 
-in vec2 vPx; // gl_FragCoord.xy, from ascii.vert
+in vec2 vPx; // gl_FragCoord.xy, from pixel.vert
 out vec4 fragColor;
 
 // Rec.601 luma on sRGB values: what the ramp and filter were tuned with (from

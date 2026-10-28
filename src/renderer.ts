@@ -3,7 +3,7 @@ import commonSrc from './shaders/common.glsl?raw';
 import rippleSrc from './shaders/ripple.frag?raw';
 import { sceneLines, sceneSrc } from './shaders/scene';
 import asciiSrc from './shaders/ascii.frag?raw';
-import asciiVertSrc from './shaders/ascii.vert?raw';
+import pixelVertSrc from './shaders/pixel.vert?raw';
 import glowSrc from './shaders/glow.frag?raw';
 import emissionFnSrc from './shaders/emission.glsl?raw';
 import emissionSrc from './shaders/emission.frag?raw';
@@ -160,7 +160,8 @@ export class Renderer {
       (packed ? '#define RIPPLE_PACKED\n' : '');
     const fragment = (src: string) => `#version 300 es\n${defines}${commonSrc}\n${src}`;
     const vertex = `#version 300 es\n${vertexSrc}`;
-    this.rippleProg = new Program(gl, vertex, fragment(rippleSrc), 'ripple');
+    const pixelVertex = `#version 300 es\n${pixelVertSrc}`;
+    this.rippleProg = new Program(gl, pixelVertex, fragment(rippleSrc), 'ripple');
     // The line scene chunk 1 starts on, so compile errors name `sky.glsl:42`.
     const sceneAt = fragment('').split('\n').length;
     const sceneFiles = sceneLines.map(({ name, line }) => ({ name, line: line + sceneAt - 1 }));
@@ -169,7 +170,7 @@ export class Renderer {
     // Without the emission pass, glow.frag gets emission() from emission.glsl.
     const glow = emission ? `#define EMIT_TEX\n${glowSrc}` : `${emissionFnSrc}\n${glowSrc}`;
     this.glowProg = software ? null : new Program(gl, vertex, fragment(glow), 'glow');
-    this.asciiProg = new Program(gl, `#version 300 es\n${asciiVertSrc}`, fragment((software ? '' : '#define GLOW\n') + asciiSrc), 'ascii');
+    this.asciiProg = new Program(gl, pixelVertex, fragment((software ? '' : '#define GLOW\n') + asciiSrc), 'ascii');
     this.flyProg = new Program(gl, `#version 300 es\n${commonSrc}\n${flyVertSrc}`, fragment(flyFragSrc), 'fly');
 
     const vao = gl.createVertexArray();
@@ -324,7 +325,7 @@ export class Renderer {
     this.rippleClock -= steps / RIPPLE_HZ;
     steps = Math.min(steps, 3);
     const rp = this.rippleProg.use();
-    rp.ivec2('uSize', this.simW, this.simH).float('uDamping', RIPPLE_DAMPING);
+    rp.vec2('uDev', this.simW, this.simH).ivec2('uSize', this.simW, this.simH).float('uDamping', RIPPLE_DAMPING);
     // Swapped in place: ripple[0] always holds the latest state.
     const ripple = this.ripple;
     for (let s = 0; s < steps; s++) {
