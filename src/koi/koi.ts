@@ -150,6 +150,8 @@ export class Koi {
   private nextRipple = 0;
   private nextGulp = 0;
   private posed = false;
+  /** sampleBody's result: x, y, radius, then the backward axis bx, by. Each call overwrites it. */
+  private readonly sample = new Float64Array(5);
 
   /** Spine centreline that follows the head's path: x, y per joint. */
   private readonly spine = new Float32Array(J_TOTAL * 2);
@@ -619,16 +621,25 @@ export class Koi {
     const finLen = v.finLength * L;
     this.pecMax = v.finWidth * L;
     this.pecRoot = this.pecMax * 0.4;
+    // sampleBody reuses one array, so each sample is copied out before the next call.
     const root = this.sampleBody(0.2);
+    const rootX = root[0];
+    const rootY = root[1];
+    const rootR = root[2];
+    const rootBx = root[3];
+    const rootBy = root[4];
+    // The fish's left in y-down screen space.
+    const rootNx = -rootBy;
+    const rootNy = rootBx;
     for (let side = -1; side <= 1; side += 2) {
       const out = side > 0 ? this.pecL : this.pecR;
       const ang = sweep + slow * 0.35 * Math.sin(t * 3.4 + (side > 0 ? 0 : Math.PI));
       const c = Math.cos(ang);
       const sn = Math.sin(ang) * side;
-      const dx = root.bx * c + root.nx * sn;
-      const dy = root.by * c + root.ny * sn;
-      const rx = root.x + root.nx * side * root.r * 0.85;
-      const ry = root.y + root.ny * side * root.r * 0.85;
+      const dx = rootBx * c + rootNx * sn;
+      const dy = rootBy * c + rootNy * sn;
+      const rx = rootX + rootNx * side * rootR * 0.85;
+      const ry = rootY + rootNy * side * rootR * 0.85;
       let tipX = rx + dx * finLen;
       let tipY = ry + dy * finLen;
       if (this.posed) {
@@ -648,10 +659,15 @@ export class Koi {
     }
 
     const head = this.sampleBody(0.075);
-    this.eyeRadius = Math.max(head.r * 0.17, 1);
+    const headX = head[0];
+    const headY = head[1];
+    const headR = head[2];
+    const headNx = -head[4];
+    const headNy = head[3];
+    this.eyeRadius = Math.max(headR * 0.17, 1);
     for (let side = 1, o = 0; side >= -1; side -= 2, o += 2) {
-      this.eyes[o] = head.x + head.nx * side * head.r * 0.55;
-      this.eyes[o + 1] = head.y + head.ny * side * head.r * 0.55;
+      this.eyes[o] = headX + headNx * side * headR * 0.55;
+      this.eyes[o + 1] = headY + headNy * side * headR * 0.55;
     }
 
     let minX = Infinity;
@@ -681,8 +697,11 @@ export class Koi {
     this.posed = true;
   }
 
-  /** Point on the rendered body centreline at u (0 nose .. 1 peduncle). */
-  private sampleBody(u: number) {
+  /**
+   * Point on the rendered body centreline at u (0 nose .. 1 peduncle), with
+   * its radius and backward (head → tail) axis, written into `sample`.
+   */
+  private sampleBody(u: number): Float64Array {
     const j = this.joints;
     const f = u * (J_BODY - 1);
     const i = Math.min(Math.floor(f), J_BODY - 2);
@@ -694,17 +713,13 @@ export class Koi {
     const bl = hypot(bx, by) || 1;
     bx /= bl;
     by /= bl;
-    return {
-      x: lerp(j[i * 3], j[(i + 1) * 3], k),
-      y: lerp(j[i * 3 + 1], j[(i + 1) * 3 + 1], k),
-      r: lerp(j[i * 3 + 2], j[(i + 1) * 3 + 2], k),
-      /** backward (head → tail) axis */
-      bx,
-      by,
-      /** fish's left in y-down screen space */
-      nx: -by,
-      ny: bx,
-    };
+    const o = this.sample;
+    o[0] = lerp(j[i * 3], j[(i + 1) * 3], k);
+    o[1] = lerp(j[i * 3 + 1], j[(i + 1) * 3 + 1], k);
+    o[2] = lerp(j[i * 3 + 2], j[(i + 1) * 3 + 2], k);
+    o[3] = bx;
+    o[4] = by;
+    return o;
   }
 
   /**
