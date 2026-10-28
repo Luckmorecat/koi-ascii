@@ -71,6 +71,15 @@ function hypot(x: number, y: number): number {
   return Math.sqrt(1 + q * q) * hi;
 }
 
+/**
+ * Age at which writeTrail ends a trail. Ages only grow along it, so a segment
+ * cut off joins samples at least this old, where trails.glsl's I is at most
+ * 0.15^1.3 < 0.085; even times the largest variety factor, 1.3 (gnoise stays
+ * within [-1, 1]), that is under the 0.12 a trail cell needs. So the strongest
+ * segment of any cell drawn is kept, and is still the first that strong.
+ */
+const TRAIL_CUT = 0.85;
+
 export type Mode = 'cruise' | 'burst' | 'glide' | 'hover' | 'flee';
 
 export interface Pointer {
@@ -155,9 +164,9 @@ export class Koi {
   eyeRadius = 1;
   /** Bounds of body and fins: min.xy, max.xy. */
   readonly bbox = new Float32Array(4);
-  /** Bounds of the trail written by the last writeTrail call. */
+  /** Bounds of the trail written by the last writeTrail call: the union of trailChunks. */
   readonly trailBox = new Float32Array(4);
-  /** Bounds of each chunk of that trail: min.xy, max.xy per chunk. */
+  /** Bounds of each chunk of that trail: min.xy, max.xy per chunk (see writeTrail). */
   readonly trailChunks = new Float32Array(TRAIL_CHUNKS * 4);
 
   /** Ring buffer of trail samples: x, y, time. */
@@ -725,46 +734,40 @@ export class Koi {
 
   /**
    * Writes trail samples newest-first as texels (x, y, age, 0) starting at
-   * `base`, beginning with the live tail-tip position. Returns the count.
+   * `base`, beginning with the live tail-tip position and ending with the
+   * first sample TRAIL_CUT old. Returns the count.
    * Chunk c of trailChunks bounds segments 1 + c * TRAIL_CHUNK to
-   * (c + 1) * TRAIL_CHUNK (segment k joins samples k - 1 and k); a chunk past
-   * the last segment is empty.
+   * (c + 1) * TRAIL_CHUNK (segment k joins samples k - 1 and k), grown by the
+   * width they draw at the chunk's oldest sample (trails.glsl trailSeg, less
+   * its cell term, which the shader adds) and 1 px for rounding; a chunk past
+   * the last segment is empty. trailBox is their union, empty with no segments.
    */
   writeTrail(out: Float32Array, base: number, t: number): number {
     const cap = TRAIL_N - 1;
     const life = this.variety.trailTime;
-    let [x, y] = this.trailPoint();
+    const [x, y] = this.trailPoint();
     out[base] = x;
     out[base + 1] = y;
     out[base + 2] = 0;
     out[base + 3] = 0;
-    let minX = x;
-    let minY = y;
-    let maxX = x;
-    let maxY = y;
     let n = 1;
     for (let k = 0; k < this.trailLen; k++) {
       const idx = (this.trailHead - 1 - k + cap) % cap;
       const age = (t - this.trail[idx * 3 + 2]) / life;
-      x = this.trail[idx * 3];
-      y = this.trail[idx * 3 + 1];
       const o = base + n * 4;
-      out[o] = x;
-      out[o + 1] = y;
+      out[o] = this.trail[idx * 3];
+      out[o + 1] = this.trail[idx * 3 + 1];
       out[o + 2] = Math.min(age, 1);
       out[o + 3] = 0;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
       n++;
-      if (age >= 1) break;
+      if (age >= TRAIL_CUT) break;
     }
-    this.trailBox[0] = minX;
-    this.trailBox[1] = minY;
-    this.trailBox[2] = maxX;
-    this.trailBox[3] = maxY;
     const boxes = this.trailChunks;
+    const w0 = this.variety.trailWidth * this.length;
+    let minX = 1e9;
+    let minY = 1e9;
+    let maxX = -1e9;
+    let maxY = -1e9;
     for (let c = 0; c < TRAIL_CHUNKS; c++) {
       const first = c * TRAIL_CHUNK;
       const last = first + 1 < n ? Math.min(first + TRAIL_CHUNK, n - 1) : -1;
@@ -772,18 +775,29 @@ export class Koi {
       let y0 = 1e9;
       let x1 = -1e9;
       let y1 = -1e9;
+      let maxAge = 0;
       for (let i = first; i <= last; i++) {
         const o = base + i * 4;
         x0 = Math.min(x0, out[o]);
         y0 = Math.min(y0, out[o + 1]);
         x1 = Math.max(x1, out[o]);
         y1 = Math.max(y1, out[o + 1]);
+        maxAge = Math.max(maxAge, out[o + 2]);
       }
-      boxes[c * 4] = x0;
-      boxes[c * 4 + 1] = y0;
-      boxes[c * 4 + 2] = x1;
-      boxes[c * 4 + 3] = y1;
+      const g = last < 0 ? 0 : w0 * (0.5 + 1.4 * maxAge) + 1;
+      boxes[c * 4] = x0 - g;
+      boxes[c * 4 + 1] = y0 - g;
+      boxes[c * 4 + 2] = x1 + g;
+      boxes[c * 4 + 3] = y1 + g;
+      minX = Math.min(minX, boxes[c * 4]);
+      minY = Math.min(minY, boxes[c * 4 + 1]);
+      maxX = Math.max(maxX, boxes[c * 4 + 2]);
+      maxY = Math.max(maxY, boxes[c * 4 + 3]);
     }
+    this.trailBox[0] = minX;
+    this.trailBox[1] = minY;
+    this.trailBox[2] = maxX;
+    this.trailBox[3] = maxY;
     return n;
   }
 

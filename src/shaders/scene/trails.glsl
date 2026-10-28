@@ -38,23 +38,25 @@ void trails(vec2 p, inout Cell c) {
   float best = 0.0;
   vec2 bestDir = vec2(1.0, 0.0);
   int bestVariety = 0;
+  // Segments come TRAIL_CHUNK to a box (Koi.writeTrail) grown by their w less
+  // cellPad, at the chunk's oldest sample, + 1 px; p outside a box is out of
+  // reach of all its segments, so the chunk is skipped. T_TBOX is the union of
+  // a fish's boxes, empty without segments: p outside it skips the fish.
+  float cellPad = 0.3 * min(uCell.x, uCell.y);
   for (int f = 0; f < MAX_FISH; f++) {
     if (f >= uFishCount) break;
+    if (!inBox(p, F(f, T_TBOX), cellPad)) continue;
     vec4 P1 = F(f, T_P1);
     int n = int(P1.x + 0.5);
     float w0 = P1.y;
-    // Past the widest a segment draws: w below tops out at w0 * 1.9 + 0.3 * cell.
-    float pad = w0 * 2.5 + uCell.y;
-    if (n < 2 || !inBox(p, F(f, T_TBOX), pad)) continue;
     int variety = int(F(f, T_P0).x + 0.5);
-    // Segments come TRAIL_CHUNK to a box (Koi.writeTrail); p outside a box is out
-    // of reach of all its segments, so the chunk is skipped. writeTrail keeps
-    // n <= TRAIL_N, so this runs at most TRAIL_CHUNKS times. Bounded by n, not
-    // TRAIL_CHUNKS and a break: a constant bound lets the driver unroll every
-    // chunk body into the program it compiles and links at startup.
+    // writeTrail keeps n <= TRAIL_N, so this runs at most TRAIL_CHUNKS times.
+    // Bounded by n, not TRAIL_CHUNKS and a break: a constant bound lets the
+    // driver unroll every chunk body into the program it compiles and links at
+    // startup.
     for (int ch = 0; 1 + ch * TRAIL_CHUNK < n; ch++) {
       int k0 = 1 + ch * TRAIL_CHUNK;
-      if (!inBox(p, F(f, T_CBOX + ch), pad)) continue;
+      if (!inBox(p, F(f, T_CBOX + ch), cellPad)) continue;
       vec4 A = F(f, T_TRAIL + k0 - 1);
       for (int j = 0; j < TRAIL_CHUNK; j += 4) {
         int k = k0 + j;
