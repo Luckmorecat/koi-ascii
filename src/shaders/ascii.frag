@@ -79,15 +79,18 @@ void main() {
   }
   // Divided in float (RDNA has no integer divide). Exact for 0 <= q < 2^20:
   // (q + 0.5) / c = k + (r + 0.5) / c keeps 0.5 / c from an integer, so floor is k.
-  ivec2 cell = ivec2(floor((vec2(q) + 0.5) / vec2(uCellPx)));
-  ivec2 local = q - cell * uCellPx;
+  // The products are in float too: every operand is an integer below 2^24, so
+  // they are exact, and RDNA's 32-bit integer multiply is quarter rate.
+  vec2 cf = floor((vec2(q) + 0.5) / vec2(uCellPx));
+  ivec2 cell = ivec2(cf);
+  ivec2 local = ivec2(vec2(q) - cf * vec2(uCellPx));
   vec4 s0 = texelFetch(uScene0, cell, 0);
   if (uRaw == 1) {
     fragColor = vec4(mix(uRawBg, s0.rgb, s0.a), 1.0);
     return;
   }
   int glyph = int(texelFetch(uScene1, cell, 0).r * 255.0 + 0.5);
-  float ink = texelFetch(uAtlas, ivec2(glyph * uCellPx.x + local.x, local.y), 0).r;
+  float ink = texelFetch(uAtlas, ivec2(int(float(glyph) * float(uCellPx.x)) + local.x, local.y), 0).r;
   vec3 bg = uBg;
 #ifdef GLOW
   // The halo lights only the background between strokes; ink keeps the
