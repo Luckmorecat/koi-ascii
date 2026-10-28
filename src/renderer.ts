@@ -17,8 +17,8 @@ import { varietyDefines } from './koi/varieties';
 import { pondUnit, type Pond } from './pond';
 import { lightingAt, type Lighting } from './lighting';
 import { POND, POND_BG, WHITE, type ResolvedPalette } from './palette';
-import { asciiLook, brightnessOnly, POND_SCENE, rampUniforms, rolesScene, type SceneColors } from './look';
-import { DEFAULT_SKY, firefliesAt, starsAt, type SkyFeatures } from './sky-features';
+import { asciiLook, brightnessOnly, POND_SCENE, rampUniforms, rolesScene, type AsciiLook, type SceneColors } from './look';
+import { DEFAULT_SKY, firefliesAt, starsAt, type SkyFeatures, type StarsFrame } from './sky-features';
 import { FIREFLY_COUNT, FIREFLY_FLOATS } from './fireflies';
 
 /** World px per ripple simulation texel. */
@@ -91,6 +91,18 @@ export class Renderer {
   private sceneColors: Readonly<SceneColors> = POND_SCENE;
   private uploadedColors: Readonly<SceneColors> | null = null;
   private flyColors: Readonly<SceneColors> | null = null;
+  /**
+   * What render() derives besides `light`, and the phase, palette and sky it
+   * last derived them from: pure functions of those three, so a frame that
+   * repeats all three (a fixed time) reuses them.
+   */
+  private sceneLight: Lighting = this.light;
+  private stars: StarsFrame = starsAt(0, DEFAULT_SKY, false);
+  private flies = 0;
+  private look: AsciiLook = asciiLook(POND, this.light);
+  private litPhase = NaN;
+  private litPalette: ResolvedPalette | null = null;
+  private litSky: SkyFeatures | null = null;
 
   private atlas: Atlas | null = null;
   private ripple: [Target, Target] | null = null;
@@ -279,14 +291,25 @@ export class Renderer {
     this.phase = phase;
     // The raw view is a fixed reference: the pond's own colours, no palette (A13).
     const palette = this.raw ? POND : this.palette;
-    // A light background stays light at night: no darker night there (D5).
-    const light = (this.light = lightingAt(phase, { darkNight: this.sky.darkNight && !palette.light }));
+    // Pure in the phase, palette and sky: derived again only when one changed.
+    if (phase !== this.litPhase || palette !== this.litPalette || this.sky !== this.litSky) {
+      // A light background stays light at night: no darker night there (D5).
+      this.light = lightingAt(phase, { darkNight: this.sky.darkNight && !palette.light });
+      // Roles keep their hues at every hour; only the brightness follows the time (Q14).
+      this.sceneLight = palette.mode === 'roles' ? brightnessOnly(this.light) : this.light;
+      this.stars = starsAt(phase, this.sky, palette.light);
+      this.flies = firefliesAt(phase, this.sky);
+      this.look = asciiLook(palette, this.light);
+      this.litPhase = phase;
+      this.litPalette = palette;
+      this.litSky = this.sky;
+    }
+    const light = this.light;
     const roles = palette.mode === 'roles';
     const colors = this.raw ? POND_SCENE : this.sceneColors;
-    // Roles keep their hues at every hour; only the brightness follows the time (Q14).
-    const sceneLight = roles ? brightnessOnly(light) : light;
-    const stars = starsAt(phase, this.sky, palette.light);
-    const flies = firefliesAt(phase, this.sky);
+    const sceneLight = this.sceneLight;
+    const stars = this.stars;
+    const flies = this.flies;
     const gl = this.gl;
     const atlas = this.atlas;
     const scene = this.scene;
@@ -438,7 +461,7 @@ export class Renderer {
     // graded by the time of day), recoloured by a ramp or filter.
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.devW, this.devH);
-    const look = asciiLook(palette, light);
+    const look = this.look;
     const filter = palette.mode === 'filter' ? palette : null;
     const tint = filter?.tint ?? WHITE;
     const ascii = this.asciiProg
