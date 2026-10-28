@@ -20,3 +20,6 @@ All browser runs use the GPU via `test/browser/gpu.ts` (refuses SwiftShader); th
 - **Drive the demo:** `?debug` defines `window.koi` (`await koi.help()`; README "Demo debug mode"); `--eval` runs it before the shots, e.g. seed and step for a reproducible frame.
 - **Compare across revisions:** `npm run shots -- --base main --sheet` reports `SAME`/`DIFF` per matrix cell and draws contact sheets.
 - **Measure GPU cost:** `npm run perf -- '?debug' --base main` prints GPU µs per pass for main and the working tree, with the delta.
+- **Measure the whole frame:** `npm run batch -- '?debug' --base main` times whole batches of advancing frames. perf's per-pass rows miss GPU time between draws, so confirm a change to draws, targets or clears here.
+- **Measure CPU cost:** `npm run cpu -- '?debug' --base main --alloc` advances time, so the fish sim, the uploads and the ripple pass are in it; `--gpu` adds per-pass GPU time.
+- **Measure start-up:** `npm run startup -- '?seed=7' --base main` times shader compile and link and the first frame; check it when a shader grows or its loops change.
