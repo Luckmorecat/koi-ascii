@@ -95,6 +95,8 @@ export class Renderer {
   private ripple: [Target, Target] | null = null;
   private scene: Target | null = null;
   private glowTarget: Target | null = null;
+  /** glowTarget holds a drawn halo (false once it is cleared, or new and zero-filled). */
+  private haloInTarget = false;
   private emissionTarget: Target | null = null;
   private rippleClock = 0;
   private devW = 1;
@@ -238,6 +240,7 @@ export class Renderer {
         // The ascii program samples uGlow whenever it was compiled with GLOW.
         this.glowTarget = createTarget(gl, cols, rows, [rgba8], gl.LINEAR);
         if (!this.glowTarget) throw new Error('Glow render target is not supported');
+        this.haloInTarget = false;
       }
       if (this.emissionProg) {
         // The cells sit inside a border as wide as the blur's reach, so the
@@ -397,11 +400,15 @@ export class Renderer {
     const haloDrawn = !!(glowProg && this.glowTarget) && this.glow && !palette.light;
     if (glowProg && this.glowTarget && (!this.glow || palette.light)) {
       // Switched off, or a light background (no glow there, Q6): an empty
-      // halo, which the ascii pass skips (uGlowOn). Cleared all the same, so
+      // halo, which the ascii pass skips (uGlowOn). Cleared all the same on
+      // the first such frame (nothing draws to it until the halo is back), so
       // the target never holds a stale halo outside the raw view.
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowTarget.fbo);
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
+      if (this.haloInTarget) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowTarget.fbo);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        this.haloInTarget = false;
+      }
     } else if (glowProg && this.glowTarget) {
       // Each cell's emission once, for the 45 taps of the blur below.
       const emission = this.emissionTarget;
@@ -424,6 +431,7 @@ export class Renderer {
         .float('uAspect', atlas.cellW / atlas.cellH)
         .float('uGain', light.glowStrength * GLOW_GAIN);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
+      this.haloInTarget = true;
     }
 
     // 4. Glyphs to the screen, on the palette's background (the pond's is
