@@ -78,16 +78,18 @@ void main() {
   // vPx is off pixel centres by far less than the 0.5 px int() would need to
   // land on another pixel, so q is the pixel gl_FragCoord would give.
   ivec2 q = ivec2(int(vPx.x), uCanvasH - 1 - int(vPx.y)) - uOrigin;
-  if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, uGrid * uCellPx))) {
+  // Divided in float (RDNA has no integer divide). Exact for |q| < 2^20:
+  // (q + 0.5) / c = k + (r + 0.5) / c keeps 0.5 / c from an integer, so floor is k.
+  vec2 cf = floor((vec2(q) + 0.5) / vec2(uCellPx));
+  ivec2 cell = ivec2(cf);
+  // renderer.ts centres whole cells, leaving margins under a cell wide, so
+  // off-grid pixels land in cell -1 or uGrid: -1 as unsigned is above any grid.
+  if (any(greaterThanEqual(uvec2(cell), uvec2(uGrid)))) {
     fragColor = vec4(uRaw == 1 ? uRawBg : uOutBg, 1.0);
     return;
   }
-  // Divided in float (RDNA has no integer divide). Exact for 0 <= q < 2^20:
-  // (q + 0.5) / c = k + (r + 0.5) / c keeps 0.5 / c from an integer, so floor is k.
   // The products are in float too: every operand is an integer below 2^24, so
   // they are exact, and RDNA's 32-bit integer multiply is quarter rate.
-  vec2 cf = floor((vec2(q) + 0.5) / vec2(uCellPx));
-  ivec2 cell = ivec2(cf);
   ivec2 local = ivec2(vec2(q) - cf * vec2(uCellPx));
   vec4 s0 = texelFetch(uScene0, cell, 0);
   if (uRaw == 1) {
