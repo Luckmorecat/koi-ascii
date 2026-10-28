@@ -6,6 +6,7 @@ import {
   type KoiPondPalette,
   type KoiPondPaletteName,
 } from '../src/index';
+import { rampUniforms } from '../src/look';
 import {
   POND,
   POND_BACKGROUND,
@@ -132,6 +133,33 @@ describe('resolvePalette', () => {
 
     it('is light when the first stop is', () => {
       expect(resolvePalette({ mode: 'ramp', colors: ['#fff', '#000'] }, parse)).toMatchObject({ light: true });
+    });
+
+    it('uploads 2 to 5 stops and each step as the float32 subtraction of the stops', () => {
+      const colors = ['#010203', '#408020', '#03fe81', '#c8e6fa', '#ffffff'];
+      const f32 = (hex: string) => rgb(hex).map(Math.fround);
+      for (let n = 2; n <= 5; n++) {
+        const stops = new Float32Array(15).fill(9);
+        const deltas = new Float32Array(12).fill(9);
+        rampUniforms(resolvePalette({ mode: 'ramp', colors: colors.slice(0, n) }, parse), stops, deltas);
+        const want = colors.map((c, k) => (k < n ? f32(c) : [0, 0, 0]));
+        expect(Array.from(stops)).toEqual(want.flat());
+        // ascii.frag's a + f * d gives mix(a, b, f) only with d == b - a as the
+        // GPU subtracts: in float32, from the float32 stops (not the doubles).
+        for (let k = 0; k < n - 1; k++) {
+          const step = [0, 1, 2].map((c) => Math.fround(want[k + 1][c] - want[k][c]));
+          expect(Array.from(deltas.subarray(k * 3, k * 3 + 3))).toEqual(step);
+        }
+      }
+      // #01 -> #03 is one channel whose float32 step differs from the double one.
+      expect(Math.fround(3 / 255 - 1 / 255)).not.toBe(Math.fround(Math.fround(3 / 255) - Math.fround(1 / 255)));
+    });
+
+    it('leaves the ramp uniforms zero for other modes', () => {
+      const stops = new Float32Array(15).fill(9);
+      const deltas = new Float32Array(12).fill(9);
+      rampUniforms(POND, stops, deltas);
+      expect([...stops, ...deltas].every((v) => v === 0)).toBe(true);
     });
   });
 

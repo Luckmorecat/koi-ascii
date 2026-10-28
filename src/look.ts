@@ -184,3 +184,17 @@ export function asciiLook(p: ResolvedPalette, light: Lighting): AsciiLook {
   const outBg = !p.background ? pondBg : p.light ? p.background : graded(p.background, light);
   return { look: LOOK_FILTER, bg: pondBg, outBg };
 }
+
+/**
+ * The ramp's stops (5 vec3s, zero past the last and for other modes) and each
+ * stop's step to the next (4 vec3s) for ascii.frag's ramp(). It adds f × step
+ * to a stop in one fused multiply-add, which is how radeonsi runs mix(stop,
+ * next, f). The step is the difference of the float32 stops, taken in double
+ * and stored as float32: the GPU's own float32 subtraction, bit for bit, so
+ * the colours are the same.
+ */
+export function rampUniforms(p: ResolvedPalette, stops: Float32Array, deltas: Float32Array): void {
+  stops.fill(0);
+  if (p.mode === 'ramp') p.stops.forEach((c, i) => stops.set(c, i * 3));
+  for (let i = 0; i < deltas.length; i++) deltas[i] = stops[i + 3] - stops[i];
+}

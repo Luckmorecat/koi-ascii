@@ -15,6 +15,7 @@ uniform int uRaw;
 uniform int uLook;          // 0 as composited, 1 ramp, 2 filter
 uniform vec3 uOutBg;        // the background as drawn; intensity fades toward it
 uniform vec3 uStops[5];     // ramp, background first
+uniform vec3 uStopDeltas[4]; // uStops[k + 1] - uStops[k] (look.ts rampUniforms)
 uniform int uStopCount;     // 2..5, evenly spaced
 uniform vec3 uTint;         // filter: multiplies the pond's colours
 uniform float uSaturation;  // filter: 0 grey … 1 original
@@ -38,20 +39,24 @@ float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 vec3 ramp(vec3 pix) {
   float t = clamp((lum(pix) - lum(uBg)) / (0.9 - lum(uBg)), 0.0, 1.0);
   float x = t * float(uStopCount - 1);
-  int i = min(int(x), uStopCount - 2);
+  // The segment index, kept in float: x >= 0, so floor(x) is int(x) and no
+  // conversion to an integer and back is needed.
+  float fi = min(floor(x), float(uStopCount - 2));
   // Not uStops[i]: a per-pixel index into a uniform array is a per-lane load
   // at the end of the chain. The stop-count tests are uniform branches and the
   // stops sit at fixed indices, so the preset ramps (3 stops) run one compare
   // and its selects.
-  vec3 a = uStops[0], b = uStops[1];
+  vec3 a = uStops[0], d = uStopDeltas[0];
   if (uStopCount > 2) {
-    if (i >= 1) { a = uStops[1]; b = uStops[2]; }
+    if (fi >= 1.0) { a = uStops[1]; d = uStopDeltas[1]; }
     if (uStopCount > 3) {
-      if (i >= 2) { a = uStops[2]; b = uStops[3]; }
-      if (uStopCount > 4 && i >= 3) { a = uStops[3]; b = uStops[4]; }
+      if (fi >= 2.0) { a = uStops[2]; d = uStopDeltas[2]; }
+      if (uStopCount > 4 && fi >= 3.0) { a = uStops[3]; d = uStopDeltas[3]; }
     }
   }
-  return mix(a, b, x - float(i));
+  // mix(a, b, f) as radeonsi runs it, one fma(f, b - a, a), with b - a
+  // worked out once per palette instead of per pixel.
+  return a + (x - fi) * d;
 }
 
 // Filter: the pond's signal above its own background, laid over the new one

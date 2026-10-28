@@ -17,7 +17,7 @@ import { varietyDefines } from './koi/varieties';
 import { pondUnit, type Pond } from './pond';
 import { lightingAt, type Lighting } from './lighting';
 import { POND, POND_BG, WHITE, type ResolvedPalette } from './palette';
-import { asciiLook, brightnessOnly, POND_SCENE, rolesScene, type SceneColors } from './look';
+import { asciiLook, brightnessOnly, POND_SCENE, rampUniforms, rolesScene, type SceneColors } from './look';
 import { DEFAULT_SKY, firefliesAt, starsAt, type SkyFeatures } from './sky-features';
 import { FIREFLY_COUNT, FIREFLY_FLOATS } from './fireflies';
 
@@ -86,6 +86,7 @@ export class Renderer {
   private readonly fishTex: WebGLTexture;
   private readonly dropBuf = new Float32Array(MAX_DROPS * 4);
   private readonly stopBuf = new Float32Array(5 * 3);
+  private readonly stopDeltaBuf = new Float32Array(4 * 3);
   /** Scene colours for the active palette (roles replace the pond's). */
   private sceneColors: Readonly<SceneColors> = POND_SCENE;
   private uploadedColors: Readonly<SceneColors> | null = null;
@@ -196,8 +197,7 @@ export class Renderer {
     this.palette = palette;
     this.intensity = intensity;
     this.sceneColors = palette.mode === 'roles' ? rolesScene(palette.roles) : POND_SCENE;
-    this.stopBuf.fill(0);
-    if (palette.mode === 'ramp') palette.stops.forEach((c, i) => this.stopBuf.set(c, i * 3));
+    rampUniforms(palette, this.stopBuf, this.stopDeltaBuf);
   }
 
   /** Sets the night-sky features; the next render() draws with them. */
@@ -457,6 +457,7 @@ export class Renderer {
       .int('uLook', look.look)
       .vec3('uOutBg', look.outBg[0], look.outBg[1], look.outBg[2])
       .vec3s('uStops', this.stopBuf)
+      .vec3s('uStopDeltas', this.stopDeltaBuf)
       .int('uStopCount', palette.mode === 'ramp' ? palette.stops.length : 2)
       .vec3('uTint', tint[0], tint[1], tint[2])
       .float('uSaturation', filter?.saturation ?? 1)
