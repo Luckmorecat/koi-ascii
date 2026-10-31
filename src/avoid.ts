@@ -130,7 +130,9 @@ export interface ZoneSource {
  * CULL_MARGIN plus the feather. Past AVOID_MAX zones, the first in list
  * order win. Writes `rects` (x, y, w, h per zone) and `radii` (one per zone),
  * all in world px: the canvas's CSS px, whatever the device pixel ratio or
- * backing-store size. Returns the zones written and the visible ones dropped.
+ * backing-store size. Returns the visible zones: the first
+ * min(visible, AVOID_MAX) were written, the rest dropped. A plain number, so
+ * a frame allocates nothing here.
  */
 export function buildZones(
   sources: readonly ZoneSource[],
@@ -140,15 +142,16 @@ export function buildZones(
   feather: number,
   rects: Float32Array,
   radii: Float32Array,
-): { count: number; dropped: number } {
+): number {
   const reach = CULL_MARGIN + feather;
   const x0 = Math.max(canvas.left, 0) - reach;
   const y0 = Math.max(canvas.top, 0) - reach;
   const x1 = Math.min(canvas.left + canvas.width, viewW) + reach;
   const y1 = Math.min(canvas.top + canvas.height, viewH) + reach;
   let count = 0;
-  let dropped = 0;
-  for (const { rect, pad, radius } of sources) {
+  // Indexed, not for…of: no iterator per frame.
+  for (let i = 0; i < sources.length; i++) {
+    const { rect, pad, radius } = sources[i];
     // Hidden (display: none) or detached: zero size. NaN fails too.
     if (!(rect.width > 0 && rect.height > 0)) continue;
     const left = rect.left - pad;
@@ -156,8 +159,8 @@ export function buildZones(
     const w = rect.width + 2 * pad;
     const h = rect.height + 2 * pad;
     if (left + w < x0 || left > x1 || top + h < y0 || top > y1) continue;
-    if (count === AVOID_MAX) {
-      dropped++;
+    if (count >= AVOID_MAX) {
+      count++;
       continue;
     }
     rects[count * 4] = left - canvas.left;
@@ -167,7 +170,7 @@ export function buildZones(
     radii[count] = radius.px + radius.frac * Math.min(rect.width, rect.height) + pad;
     count++;
   }
-  return { count, dropped };
+  return count;
 }
 
 /** A listed element, resolved, with what the pond caches about it. */
@@ -265,17 +268,19 @@ export class AvoidZones {
    * zones were dropped past AVOID_MAX.
    */
   measure(canvas: Box, viewW: number, viewH: number, feather: number): number {
-    for (const e of this.entries) {
+    for (let i = 0; i < this.entries.length; i++) {
+      const e = this.entries[i];
+      // The one allocation per element per frame: the DOMRect itself.
       e.rect = e.element.getBoundingClientRect();
       const zero = !(e.rect.width > 0 && e.rect.height > 0);
       if (!zero && e.zero) e.radius = readRadius(e.element);
       e.zero = zero;
     }
-    const { count, dropped } = buildZones(this.entries, canvas, viewW, viewH, feather, this.rects, this.radii);
-    if (dropped > 0 && !this.warned) {
+    const visible = buildZones(this.entries, canvas, viewW, viewH, feather, this.rects, this.radii);
+    if (visible > AVOID_MAX && !this.warned) {
       this.warned = true;
-      warn(`avoid: ${count + dropped} zones are visible but the pond has ${AVOID_MAX} slots; the first ${AVOID_MAX} in list order are used.`);
+      warn(`avoid: ${visible} zones are visible but the pond has ${AVOID_MAX} slots; the first ${AVOID_MAX} in list order are used.`);
     }
-    return count;
+    return Math.min(visible, AVOID_MAX);
   }
 }

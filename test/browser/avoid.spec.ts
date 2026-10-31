@@ -135,6 +135,37 @@ test('a zone fades the pond under its element and nowhere else', async ({ page }
   expect(await page.evaluate((i) => window.koiTest.ponds[i].errors, i)).toEqual([]);
 });
 
+test('zones the pond will not draw are not measured, and are measured afresh once they are', async ({ page }) => {
+  const i = await pond(page, {});
+  await addElement(page, TEXT);
+  /** Element reads during one redraw with the zone listed. */
+  const reads = () =>
+    page.evaluate((i) => {
+      const m = window.koiTest.ponds[i];
+      const el = (window as unknown as { koiZone: HTMLElement }).koiZone;
+      m.handle.setAvoid([el]);
+      let n = 0;
+      const own = el.getBoundingClientRect.bind(el);
+      el.getBoundingClientRect = () => (n++, own());
+      m.core!.redraw();
+      delete (el as Partial<HTMLElement>).getBoundingClientRect;
+      return n;
+    }, i);
+  expect(await reads()).toBe(1);
+  await page.evaluate((i) => window.koiTest.ponds[i].handle.setAvoidFade({ strength: 0 }), i);
+  expect(await reads()).toBe(0);
+  await page.evaluate((i) => void (window.koiTest.ponds[i].core!.renderer!.raw = true), i);
+  await page.evaluate((i) => window.koiTest.ponds[i].handle.setAvoidFade({ strength: 1 }), i);
+  expect(await reads()).toBe(0);
+  await page.evaluate((i) => void (window.koiTest.ponds[i].core!.renderer!.raw = false), i);
+  // Moved while unmeasured: the next drawn frame has it where it is now.
+  const moved = { ...TEXT, top: 40 };
+  await page.evaluate((top) => ((window as unknown as { koiZone: HTMLElement }).koiZone.style.top = `${top}px`), moved.top);
+  const after = await compare(page, i, [false, true], moved);
+  expect(after.inside).toBeGreaterThan(200);
+  expect(after.outside).toBe(0);
+});
+
 test('the raw view shows no fade; the debug outline draws the zones even at strength 0', async ({ page }) => {
   const i = await pond(page, {});
   await addElement(page, TEXT);

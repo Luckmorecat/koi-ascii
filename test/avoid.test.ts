@@ -148,7 +148,7 @@ describe('zone building (A5, A8–A10)', () => {
   const rect = (i: number) => [...rects.slice(i * 4, i * 4 + 4)];
 
   it('grows the box by pad and rounds by border radius plus pad', () => {
-    expect(build([zone({ left: 100, top: 50, width: 200, height: 40 }, 12, { px: 8, frac: 0 })])).toEqual({ count: 1, dropped: 0 });
+    expect(build([zone({ left: 100, top: 50, width: 200, height: 40 }, 12, { px: 8, frac: 0 })])).toBe(1);
     expect(rect(0)).toEqual([88, 38, 224, 64]);
     expect(radii[0]).toBe(20);
   });
@@ -175,7 +175,7 @@ describe('zone building (A5, A8–A10)', () => {
       zone({ left: 10, top: 10, width: NaN, height: 5 }),
       zone({ left: 10, top: 10, width: 5, height: 5 }),
     ]);
-    expect(r).toEqual({ count: 1, dropped: 0 });
+    expect(r).toBe(1);
     expect(rect(0)).toEqual([-2, -2, 29, 29]);
   });
 
@@ -184,26 +184,26 @@ describe('zone building (A5, A8–A10)', () => {
     const canvas = { left: 0, top: 0, width: 800, height: 3000 };
     const reach = CULL_MARGIN + 56;
     const at = (top: number) => zone({ left: 100, top, width: 100, height: 40 }, 0);
-    expect(build([at(600 + reach)], canvas).count).toBe(1);
-    expect(build([at(600 + reach + 1)], canvas).count).toBe(0);
-    expect(build([at(2000)], canvas).count).toBe(0);
-    expect(build([at(-40 - reach)], canvas).count).toBe(1);
-    expect(build([at(-40 - reach - 1)], canvas).count).toBe(0);
+    expect(build([at(600 + reach)], canvas)).toBe(1);
+    expect(build([at(600 + reach + 1)], canvas)).toBe(0);
+    expect(build([at(2000)], canvas)).toBe(0);
+    expect(build([at(-40 - reach)], canvas)).toBe(1);
+    expect(build([at(-40 - reach - 1)], canvas)).toBe(0);
     // Pad counts toward reaching in.
-    expect(build([zone({ left: 100, top: 600 + reach + 10, width: 100, height: 40 }, 12)], canvas).count).toBe(1);
+    expect(build([zone({ left: 100, top: 600 + reach + 10, width: 100, height: 40 }, 12)], canvas)).toBe(1);
     // The viewport crops the canvas sideways too.
     const wide = { left: -500, top: 0, width: 2000, height: 600 };
-    expect(build([zone({ left: 800 + reach + 1, top: 0, width: 10, height: 10 }, 0)], wide).count).toBe(0);
-    expect(build([zone({ left: -10 - reach - 1, top: 0, width: 10, height: 10 }, 0)], wide).count).toBe(0);
+    expect(build([zone({ left: 800 + reach + 1, top: 0, width: 10, height: 10 }, 0)], wide)).toBe(0);
+    expect(build([zone({ left: -10 - reach - 1, top: 0, width: 10, height: 10 }, 0)], wide)).toBe(0);
     // A zone over a canvas that sits wholly below the fold.
     const below = { left: 0, top: 900, width: 800, height: 600 };
-    expect(build([zone({ left: 0, top: 950, width: 10, height: 10 }, 0)], below).count).toBe(0);
+    expect(build([zone({ left: 0, top: 950, width: 10, height: 10 }, 0)], below)).toBe(0);
   });
 
-  it('keeps the first 16 visible zones in list order and counts the rest', () => {
+  it('keeps the first 16 visible zones in list order and counts every visible one', () => {
     const hidden = zone({ left: 0, top: 5000, width: 10, height: 10 }, 0);
     const list = [hidden, ...Array.from({ length: 20 }, (_, i) => zone({ left: i, top: 0, width: 10, height: 10 }, 0))];
-    expect(build(list)).toEqual({ count: 16, dropped: 4 });
+    expect(build(list)).toBe(20);
     expect(rect(0)[0]).toBe(0);
     expect(rect(15)[0]).toBe(15);
   });

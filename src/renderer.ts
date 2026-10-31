@@ -21,7 +21,10 @@ import { POND, POND_BG, WHITE, type ResolvedPalette } from './palette';
 import { asciiLook, brightnessOnly, POND_SCENE, rampUniforms, rolesScene, type AsciiLook, type SceneColors } from './look';
 import { DEFAULT_SKY, firefliesAt, starsAt, type SkyFeatures, type StarsFrame } from './sky-features';
 import { FIREFLY_COUNT, FIREFLY_FLOATS } from './fireflies';
-import { AVOID_MAX, avoidAmounts, DEFAULT_FADE, type AvoidAmounts, type AvoidFade } from './avoid';
+import { avoidAmounts, DEFAULT_FADE, type AvoidAmounts, type AvoidFade } from './avoid';
+
+/** Stands in for mount()'s zone arrays until the first setAvoid. */
+const NO_ZONES = new Float32Array(0);
 
 /** World px per ripple simulation texel. */
 const RIPPLE_PX = 5;
@@ -91,9 +94,13 @@ export class Renderer {
   private readonly dropBuf = new Float32Array(MAX_DROPS * 4);
   private readonly stopBuf = new Float32Array(5 * 3);
   private readonly stopDeltaBuf = new Float32Array(4 * 3);
-  /** Readability zones for the next frames (mount() measures them): x, y, w, h and a radius each, world px. */
-  private avoidRects: Float32Array = new Float32Array(AVOID_MAX * 4);
-  private avoidRadii: Float32Array = new Float32Array(AVOID_MAX);
+  /**
+   * Readability zones for the next frames, as mount() last measured them: x,
+   * y, w, h and a radius each, world px. mount()'s arrays (setAvoid); never
+   * read while avoidCount is 0.
+   */
+  private avoidRects: Float32Array = NO_ZONES;
+  private avoidRadii: Float32Array = NO_ZONES;
   private avoidCount = 0;
   /** The readability fade, already resolved; mount() owns it like the palette. */
   private avoidFade: AvoidFade = DEFAULT_FADE;
@@ -240,7 +247,16 @@ export class Renderer {
   setAvoid(rects: Float32Array, radii: Float32Array, count: number): void {
     this.avoidRects = rects;
     this.avoidRadii = radii;
-    this.avoidCount = Math.min(count, AVOID_MAX);
+    // At most AVOID_MAX: buildZones (avoid.ts) never writes more.
+    this.avoidCount = count;
+  }
+
+  /**
+   * Whether render() draws zones at all: not in the raw view (A14), nor at
+   * strength 0 unless outlined. mount() skips measuring when it doesn't.
+   */
+  get drawsAvoid(): boolean {
+    return !this.raw && (this.avoidFade.strength > 0 || this.showAvoid);
   }
 
   /** Sets the readability fade; the next render() draws with it. */
@@ -344,9 +360,8 @@ export class Renderer {
     const flies = this.flies;
     // Readability zones: none in the raw view (A14), and none at strength 0
     // unless outlined, so those frames draw exactly as without zones.
-    const fade = this.avoidFade;
     const amounts = this.avoidAmounts;
-    const zones = this.raw || (fade.strength <= 0 && !this.showAvoid) ? 0 : this.avoidCount;
+    const zones = this.drawsAvoid ? this.avoidCount : 0;
     const gl = this.gl;
     const atlas = this.atlas;
     const scene = this.scene;

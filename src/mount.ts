@@ -420,12 +420,14 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
      * Measures the readability zones for the draw about to happen. On every
      * drawn frame and manual draw (D8), never while the loop is stopped: the
      * page's elements move without telling anyone (scroll, transforms,
-     * animations), so a fresh read is the only way to be right. No zones, no
-     * reads.
+     * animations), so a fresh read is the only way to be right. No reads
+     * without zones, or when the renderer won't draw them (strength 0 without
+     * the debug outline, the raw view); the next frame that draws them
+     * measures afresh.
      */
     const measureZones = (r: Renderer) => {
       let count = 0;
-      if (zones.size > 0) {
+      if (zones.size > 0 && r.drawsAvoid) {
         const c = canvas.getBoundingClientRect();
         count = zones.measure(c, window.innerWidth, window.innerHeight, avoidFade.feather);
       }
