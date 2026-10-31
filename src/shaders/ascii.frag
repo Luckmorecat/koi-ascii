@@ -15,6 +15,7 @@ uniform int uRaw;
 uniform int uLook;          // 0 as composited, 1 ramp, 2 filter
 uniform vec3 uOutBg;        // the background as drawn; intensity fades toward it
 uniform vec3 uStops[5];     // ramp, background first
+uniform vec3 uStopDeltas[4]; // uStops[k + 1] - uStops[k] (look.ts rampUniforms)
 uniform int uStopCount;     // 2..5, evenly spaced
 uniform vec3 uTint;         // filter: multiplies the pond's colours
 uniform float uSaturation;  // filter: 0 grey … 1 original
@@ -23,8 +24,10 @@ uniform float uIntensity;   // 0 only the background … 1 the full pond
 #ifdef GLOW
 uniform sampler2D uGlow; // cell-resolution halo, linear filtered (see glow.frag)
 uniform vec2 uGlowScale;  // grid px → glow texture coordinates
+uniform int uGlowOn;      // 0 when the renderer cleared the halo instead of drawing it
 #endif
 
+in vec2 vPx; // gl_FragCoord.xy, from pixel.vert
 out vec4 fragColor;
 
 // Rec.601 luma on sRGB values: what the ramp and filter were tuned with (from
@@ -36,8 +39,24 @@ float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 vec3 ramp(vec3 pix) {
   float t = clamp((lum(pix) - lum(uBg)) / (0.9 - lum(uBg)), 0.0, 1.0);
   float x = t * float(uStopCount - 1);
-  int i = min(int(x), uStopCount - 2);
-  return mix(uStops[i], uStops[i + 1], x - float(i));
+  // The segment index, kept in float: x >= 0, so floor(x) is int(x) and no
+  // conversion to an integer and back is needed.
+  float fi = min(floor(x), float(uStopCount - 2));
+  // Not uStops[i]: a per-pixel index into a uniform array is a per-lane load
+  // at the end of the chain. The stop-count tests are uniform branches and the
+  // stops sit at fixed indices, so the preset ramps (3 stops) run one compare
+  // and its selects.
+  vec3 a = uStops[0], d = uStopDeltas[0];
+  if (uStopCount > 2) {
+    if (fi >= 1.0) { a = uStops[1]; d = uStopDeltas[1]; }
+    if (uStopCount > 3) {
+      if (fi >= 2.0) { a = uStops[2]; d = uStopDeltas[2]; }
+      if (uStopCount > 4 && fi >= 3.0) { a = uStops[3]; d = uStopDeltas[3]; }
+    }
+  }
+  // mix(a, b, f) as radeonsi runs it, one fma(f, b - a, a), with b - a
+  // worked out once per palette instead of per pixel.
+  return a + (x - fi) * d;
 }
 
 // Filter: the pond's signal above its own background, laid over the new one
@@ -56,29 +75,45 @@ vec3 filtered(vec3 pix) {
 }
 
 void main() {
-  ivec2 q = ivec2(int(gl_FragCoord.x), uCanvasH - 1 - int(gl_FragCoord.y)) - uOrigin;
-  if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, uGrid * uCellPx))) {
+  // vPx is off pixel centres by far less than the 0.5 px int() would need to
+  // land on another pixel, so q is the pixel gl_FragCoord would give.
+  ivec2 q = ivec2(int(vPx.x), uCanvasH - 1 - int(vPx.y)) - uOrigin;
+  // Divided in float (RDNA has no integer divide). Exact for |q| < 2^20:
+  // (q + 0.5) / c = k + (r + 0.5) / c keeps 0.5 / c from an integer, so floor is k.
+  vec2 cf = floor((vec2(q) + 0.5) / vec2(uCellPx));
+  ivec2 cell = ivec2(cf);
+  // renderer.ts centres whole cells, leaving margins under a cell wide, so
+  // off-grid pixels land in cell -1 or uGrid: -1 as unsigned is above any grid.
+  if (any(greaterThanEqual(uvec2(cell), uvec2(uGrid)))) {
     fragColor = vec4(uRaw == 1 ? uRawBg : uOutBg, 1.0);
     return;
   }
-  ivec2 cell = q / uCellPx;
-  ivec2 local = q - cell * uCellPx;
+  // The products are in float too: every operand is an integer below 2^24, so
+  // they are exact, and RDNA's 32-bit integer multiply is quarter rate.
+  ivec2 local = ivec2(vec2(q) - cf * vec2(uCellPx));
   vec4 s0 = texelFetch(uScene0, cell, 0);
   if (uRaw == 1) {
     fragColor = vec4(mix(uRawBg, s0.rgb, s0.a), 1.0);
     return;
   }
   int glyph = int(texelFetch(uScene1, cell, 0).r * 255.0 + 0.5);
-  float ink = texelFetch(uAtlas, ivec2(glyph * uCellPx.x + local.x, local.y), 0).r;
+  float ink = texelFetch(uAtlas, ivec2(int(float(glyph) * float(uCellPx.x)) + local.x, local.y), 0).r;
   vec3 bg = uBg;
 #ifdef GLOW
   // The halo lights only the background between strokes; ink keeps the
-  // glyph's own colour, so shapes stay crisp under the glow.
-  bg += texture(uGlow, (vec2(q) + 0.5) * uGlowScale).rgb;
+  // glyph's own colour, so shapes stay crisp under the glow. A cleared halo
+  // would add exactly 0, so it is not sampled (a uniform branch). The halo has
+  // one level, so an explicit LOD reads the same texels without derivatives
+  // (the sample sits after per-pixel early returns).
+  if (uGlowOn == 1) bg += textureLod(uGlow, (vec2(q) + 0.5) * uGlowScale, 0.0).rgb;
 #endif
   vec3 c = mix(bg, s0.rgb, ink);
-  if (uLook == 1) c = ramp(c);
-  else if (uLook == 2) c = clamp(filtered(c), 0.0, 1.0);
-  if (uIntensity < 1.0) c = mix(uOutBg, c, uIntensity);
+  // One uniform branch around the look, so the plain pond skips it in a single
+  // jump (on its own, the small intensity mix was flattened into every pixel).
+  if (uLook != 0 || uIntensity < 1.0) {
+    if (uLook == 1) c = ramp(c);
+    else if (uLook == 2) c = clamp(filtered(c), 0.0, 1.0);
+    if (uIntensity < 1.0) c = mix(uOutBg, c, uIntensity);
+  }
   fragColor = vec4(c, 1.0);
 }

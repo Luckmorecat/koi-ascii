@@ -3,7 +3,10 @@ import commonSrc from './shaders/common.glsl?raw';
 import rippleSrc from './shaders/ripple.frag?raw';
 import { sceneLines, sceneSrc } from './shaders/scene';
 import asciiSrc from './shaders/ascii.frag?raw';
+import pixelVertSrc from './shaders/pixel.vert?raw';
 import glowSrc from './shaders/glow.frag?raw';
+import emissionFnSrc from './shaders/emission.glsl?raw';
+import emissionSrc from './shaders/emission.frag?raw';
 import flyVertSrc from './shaders/fly.vert?raw';
 import flyFragSrc from './shaders/fly.frag?raw';
 import { Program } from './gl/program';
@@ -14,8 +17,8 @@ import { varietyDefines } from './koi/varieties';
 import { pondUnit, type Pond } from './pond';
 import { lightingAt, type Lighting } from './lighting';
 import { POND, POND_BG, WHITE, type ResolvedPalette } from './palette';
-import { asciiLook, brightnessOnly, POND_SCENE, rolesScene, type SceneColors } from './look';
-import { DEFAULT_SKY, firefliesAt, starsAt, type SkyFeatures } from './sky-features';
+import { asciiLook, brightnessOnly, POND_SCENE, rampUniforms, rolesScene, type AsciiLook, type SceneColors } from './look';
+import { DEFAULT_SKY, firefliesAt, starsAt, type SkyFeatures, type StarsFrame } from './sky-features';
 import { FIREFLY_COUNT, FIREFLY_FLOATS } from './fireflies';
 
 /** World px per ripple simulation texel. */
@@ -30,16 +33,21 @@ const FONT_MAX = 22;
 const FONT_MIN_DEVICE = 11;
 /** Halo brightness at glowStrength 1; kept low so glyphs never wash into blobs. */
 const GLOW_GAIN = 2.2;
+/** Halo blur reach in cells either side: columns, rows (RX, RY in glow.frag). */
+const GLOW_RX = 4;
+const GLOW_RY = 2;
 /** Firefly window weight below which no point is drawn (fly.vert's FLY_MIN then hides each one anyway). */
 const FLIES_MIN = 0.02;
 
 /**
  * Four passes per frame:
  *  1. ripple — wave equation on a coarse grid (ping-pong)
- *  2. scene  — one fragment per character cell → colour and glyph; then the
+ *  2. scene  — one fragment per character cell → colour and glyph, in two
+ *              draws (the water and all on it, then the fish); then the
  *              fireflies as one point each into the same cells, over the fish
- *  3. glow   — one fragment per cell → blurred halo of the bright cells
- *              (skipped on software renderers: no target, no program)
+ *  3. glow   — one fragment per cell → blurred halo of the bright cells,
+ *              from each cell's emission, stored first where float targets
+ *              exist (skipped on software renderers: no target, no program)
  *  4. ascii  — per screen pixel, copy the cell's glyph from the atlas
  */
 export class Renderer {
@@ -68,6 +76,9 @@ export class Renderer {
   private readonly sceneProg: Program;
   private readonly asciiProg: Program;
   private readonly glowProg: Program | null;
+  /** Each cell's emission for the glow pass; null without float32 targets (glow works it out per tap). */
+  private readonly emissionProg: Program | null;
+  private readonly emissionFormat: TexFormat;
   private readonly flyProg: Program;
   /** Vertex array and buffer for the fireflies: one vec4 per point (fireflies.ts). */
   private readonly flyVao: WebGLVertexArrayObject;
@@ -75,15 +86,31 @@ export class Renderer {
   private readonly fishTex: WebGLTexture;
   private readonly dropBuf = new Float32Array(MAX_DROPS * 4);
   private readonly stopBuf = new Float32Array(5 * 3);
+  private readonly stopDeltaBuf = new Float32Array(4 * 3);
   /** Scene colours for the active palette (roles replace the pond's). */
   private sceneColors: Readonly<SceneColors> = POND_SCENE;
   private uploadedColors: Readonly<SceneColors> | null = null;
   private flyColors: Readonly<SceneColors> | null = null;
+  /**
+   * What render() derives besides `light`, and the phase, palette and sky it
+   * last derived them from: pure functions of those three, so a frame that
+   * repeats all three (a fixed time) reuses them.
+   */
+  private sceneLight: Lighting = this.light;
+  private stars: StarsFrame = starsAt(0, DEFAULT_SKY, false);
+  private flies = 0;
+  private look: AsciiLook = asciiLook(POND, this.light);
+  private litPhase = NaN;
+  private litPalette: ResolvedPalette | null = null;
+  private litSky: SkyFeatures | null = null;
 
   private atlas: Atlas | null = null;
   private ripple: [Target, Target] | null = null;
   private scene: Target | null = null;
   private glowTarget: Target | null = null;
+  /** glowTarget holds a drawn halo (false once it is cleared, or new and zero-filled). */
+  private haloInTarget = false;
+  private emissionTarget: Target | null = null;
   private rippleClock = 0;
   private devW = 1;
   private devH = 1;
@@ -112,16 +139,38 @@ export class Renderer {
     this.ripplePacked = packed;
     this.rippleFormat = packed ? { internal: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE } : half;
 
-    const defines = layoutDefines() + glyphDefines() + varietyDefines() + (packed ? '#define RIPPLE_PACKED\n' : '');
+    // Each cell's emission goes to a float32 target once per frame for the glow
+    // pass to read; float32 keeps every bit (half floats would round), so
+    // without it the glow pass works emission out per tap instead.
+    this.emissionFormat = { internal: gl.RGBA32F, format: gl.RGBA, type: gl.FLOAT };
+    let emission = false;
+    if (!software && gl.getExtension('EXT_color_buffer_float')) {
+      const probe = createTarget(gl, 4, 4, [this.emissionFormat]);
+      if (probe) {
+        deleteTarget(gl, probe);
+        emission = true;
+      }
+    }
+
+    const defines =
+      layoutDefines() +
+      glyphDefines() +
+      varietyDefines() +
+      `#define RX ${GLOW_RX}\n#define RY ${GLOW_RY}\n` +
+      (packed ? '#define RIPPLE_PACKED\n' : '');
     const fragment = (src: string) => `#version 300 es\n${defines}${commonSrc}\n${src}`;
     const vertex = `#version 300 es\n${vertexSrc}`;
-    this.rippleProg = new Program(gl, vertex, fragment(rippleSrc), 'ripple');
+    const pixelVertex = `#version 300 es\n${pixelVertSrc}`;
+    this.rippleProg = new Program(gl, pixelVertex, fragment(rippleSrc), 'ripple');
     // The line scene chunk 1 starts on, so compile errors name `sky.glsl:42`.
     const sceneAt = fragment('').split('\n').length;
     const sceneFiles = sceneLines.map(({ name, line }) => ({ name, line: line + sceneAt - 1 }));
     this.sceneProg = new Program(gl, vertex, fragment(sceneSrc), 'scene', sceneFiles);
-    this.glowProg = software ? null : new Program(gl, vertex, fragment(glowSrc), 'glow');
-    this.asciiProg = new Program(gl, vertex, fragment((software ? '' : '#define GLOW\n') + asciiSrc), 'ascii');
+    this.emissionProg = emission ? new Program(gl, vertex, fragment(`${emissionFnSrc}\n${emissionSrc}`), 'emission') : null;
+    // Without the emission pass, glow.frag gets emission() from emission.glsl.
+    const glow = emission ? `#define EMIT_TEX\n${glowSrc}` : `${emissionFnSrc}\n${glowSrc}`;
+    this.glowProg = software ? null : new Program(gl, vertex, fragment(glow), 'glow');
+    this.asciiProg = new Program(gl, pixelVertex, fragment((software ? '' : '#define GLOW\n') + asciiSrc), 'ascii');
     this.flyProg = new Program(gl, `#version 300 es\n${commonSrc}\n${flyVertSrc}`, fragment(flyFragSrc), 'fly');
 
     const vao = gl.createVertexArray();
@@ -161,8 +210,7 @@ export class Renderer {
     this.palette = palette;
     this.intensity = intensity;
     this.sceneColors = palette.mode === 'roles' ? rolesScene(palette.roles) : POND_SCENE;
-    this.stopBuf.fill(0);
-    if (palette.mode === 'ramp') palette.stops.forEach((c, i) => this.stopBuf.set(c, i * 3));
+    rampUniforms(palette, this.stopBuf, this.stopDeltaBuf);
   }
 
   /** Sets the night-sky features; the next render() draws with them. */
@@ -197,12 +245,22 @@ export class Renderer {
       this.scene = createTarget(gl, cols, rows, [rgba8, rgba8]);
       if (!this.scene) throw new Error('Scene render target is not supported');
       if (this.glowTarget) deleteTarget(gl, this.glowTarget);
+      if (this.emissionTarget) deleteTarget(gl, this.emissionTarget);
       // Linear, so the ASCII pass reads a smooth halo across cell borders.
       this.glowTarget = null;
+      this.emissionTarget = null;
       if (this.glowProg) {
         // The ascii program samples uGlow whenever it was compiled with GLOW.
         this.glowTarget = createTarget(gl, cols, rows, [rgba8], gl.LINEAR);
         if (!this.glowTarget) throw new Error('Glow render target is not supported');
+        this.haloInTarget = false;
+      }
+      if (this.emissionProg) {
+        // The cells sit inside a border as wide as the blur's reach, so the
+        // glow pass's off-grid taps read 0 instead of clamping. Created
+        // zero-filled; nothing may ever draw to or clear the border.
+        this.emissionTarget = createTarget(gl, cols + 2 * GLOW_RX, rows + 2 * GLOW_RY, [this.emissionFormat]);
+        if (!this.emissionTarget) throw new Error('Emission render target is not supported');
       }
       this.cols = cols;
       this.rows = rows;
@@ -234,14 +292,25 @@ export class Renderer {
     this.phase = phase;
     // The raw view is a fixed reference: the pond's own colours, no palette (A13).
     const palette = this.raw ? POND : this.palette;
-    // A light background stays light at night: no darker night there (D5).
-    const light = (this.light = lightingAt(phase, { darkNight: this.sky.darkNight && !palette.light }));
+    // Pure in the phase, palette and sky: derived again only when one changed.
+    if (phase !== this.litPhase || palette !== this.litPalette || this.sky !== this.litSky) {
+      // A light background stays light at night: no darker night there (D5).
+      this.light = lightingAt(phase, { darkNight: this.sky.darkNight && !palette.light });
+      // Roles keep their hues at every hour; only the brightness follows the time (Q14).
+      this.sceneLight = palette.mode === 'roles' ? brightnessOnly(this.light) : this.light;
+      this.stars = starsAt(phase, this.sky, palette.light);
+      this.flies = firefliesAt(phase, this.sky);
+      this.look = asciiLook(palette, this.light);
+      this.litPhase = phase;
+      this.litPalette = palette;
+      this.litSky = this.sky;
+    }
+    const light = this.light;
     const roles = palette.mode === 'roles';
     const colors = this.raw ? POND_SCENE : this.sceneColors;
-    // Roles keep their hues at every hour; only the brightness follows the time (Q14).
-    const sceneLight = roles ? brightnessOnly(light) : light;
-    const stars = starsAt(phase, this.sky, palette.light);
-    const flies = firefliesAt(phase, this.sky);
+    const sceneLight = this.sceneLight;
+    const stars = this.stars;
+    const flies = this.flies;
     const gl = this.gl;
     const atlas = this.atlas;
     const scene = this.scene;
@@ -256,18 +325,20 @@ export class Renderer {
     this.rippleClock -= steps / RIPPLE_HZ;
     steps = Math.min(steps, 3);
     const rp = this.rippleProg.use();
-    rp.ivec2('uSize', this.simW, this.simH).float('uDamping', RIPPLE_DAMPING);
-    let ripple = this.ripple;
+    rp.vec2('uDev', this.simW, this.simH).ivec2('uSize', this.simW, this.simH).float('uDamping', RIPPLE_DAMPING);
+    // Swapped in place: ripple[0] always holds the latest state.
+    const ripple = this.ripple;
     for (let s = 0; s < steps; s++) {
-      const [src, dst] = ripple;
+      const src = ripple[0];
+      const dst = ripple[1];
       gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fbo);
       gl.viewport(0, 0, this.simW, this.simH);
       rp.texture('uState', 0, src.textures[0]);
       rp.int('uDropCount', s === 0 ? this.takeDrops(pond) : 0).vec4s('uDrops', this.dropBuf);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
-      ripple = [dst, src];
+      ripple[0] = dst;
+      ripple[1] = src;
     }
-    this.ripple = ripple;
 
     // 2. Scene at one fragment per character cell.
     const count = pond.pack();
@@ -297,11 +368,11 @@ export class Renderer {
       // Wraps every ~18 h; float32 keeps ~8 ms resolution at the top of the range.
       .float('uTime', pond.time % 65536)
       // Time-of-day lighting, all derived on the CPU from the phase.
-      .vec3('uLightDir', ...light.dir)
-      .vec3('uLightCol', ...sceneLight.color)
-      .vec3('uAmbient', ...sceneLight.ambient)
-      .vec3('uWaterTint', ...sceneLight.water)
-      .vec3('uSky', ...sceneLight.sky)
+      .vec3('uLightDir', light.dir[0], light.dir[1], light.dir[2])
+      .vec3('uLightCol', sceneLight.color[0], sceneLight.color[1], sceneLight.color[2])
+      .vec3('uAmbient', sceneLight.ambient[0], sceneLight.ambient[1], sceneLight.ambient[2])
+      .vec3('uWaterTint', sceneLight.water[0], sceneLight.water[1], sceneLight.water[2])
+      .vec3('uSky', sceneLight.sky[0], sceneLight.sky[1], sceneLight.sky[2])
       .float('uGlint', light.glint)
       .float('uCaustic', light.caustic)
       .float('uFloor', light.floor)
@@ -316,7 +387,15 @@ export class Renderer {
       .vec2('uView', this.devW / this.dpr, this.devH / this.dpr)
       .vec4('uMoon', light.moon.pos[0], light.moon.pos[1], light.moon.radius, this.sky.moon ? light.moon.alpha : 0)
       .vec4('uSun', light.sun.pos[0], light.sun.pos[1], light.sun.radius, this.sky.sun ? light.sun.alpha : 0);
+    // Two draws, so the waves that run the fish no longer also run the water
+    // under them: every cell's water and all on it, then the fish over that
+    // (main.frag discards the cells no fish claims).
+    sp.int('uLayer', 0).int('uFishDraw', 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (count > 0) {
+      sp.int('uLayer', 1).int('uFishDraw', count);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
 
     // Fireflies: one point each, written over the scene's cells (fish too).
     // Outside their dusk window, or off, nothing is drawn.
@@ -342,47 +421,69 @@ export class Renderer {
 
     // 3. Halo of the bright cells, at cell resolution. Not needed in the raw view.
     const glowProg = this.raw ? null : this.glowProg;
+    const haloDrawn = !!(glowProg && this.glowTarget) && this.glow && !palette.light;
     if (glowProg && this.glowTarget && (!this.glow || palette.light)) {
       // Switched off, or a light background (no glow there, Q6): an empty
-      // halo, since the ascii pass always adds it.
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowTarget.fbo);
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
+      // halo, which the ascii pass skips (uGlowOn). Cleared all the same on
+      // the first such frame (nothing draws to it until the halo is back), so
+      // the target never holds a stale halo outside the raw view.
+      if (this.haloInTarget) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowTarget.fbo);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        this.haloInTarget = false;
+      }
     } else if (glowProg && this.glowTarget) {
+      // Each cell's emission once, for the 45 taps of the blur below.
+      const emission = this.emissionTarget;
+      if (this.emissionProg && emission) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, emission.fbo);
+        gl.viewport(GLOW_RX, GLOW_RY, this.cols, this.rows);
+        this.emissionProg
+          .use()
+          .texture('uScene0', 0, scene.textures[0])
+          .texture('uScene1', 1, scene.textures[1]);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.viewport(0, 0, this.cols, this.rows);
+      }
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowTarget.fbo);
+      glowProg.use();
+      if (emission) glowProg.texture('uEmit', 0, emission.textures[0]);
+      else glowProg.texture('uScene0', 0, scene.textures[0]).texture('uScene1', 1, scene.textures[1]);
       glowProg
-        .use()
-        .texture('uScene0', 0, scene.textures[0])
-        .texture('uScene1', 1, scene.textures[1])
         .ivec2('uGrid', this.cols, this.rows)
         .float('uAspect', atlas.cellW / atlas.cellH)
         .float('uGain', light.glowStrength * GLOW_GAIN);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
+      this.haloInTarget = true;
     }
 
     // 4. Glyphs to the screen, on the palette's background (the pond's is
     // graded by the time of day), recoloured by a ramp or filter.
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.devW, this.devH);
-    const look = asciiLook(palette, light);
+    const look = this.look;
     const filter = palette.mode === 'filter' ? palette : null;
+    const tint = filter?.tint ?? WHITE;
     const ascii = this.asciiProg
       .use()
       .texture('uScene0', 0, scene.textures[0])
       .texture('uScene1', 1, scene.textures[1])
       .texture('uAtlas', 2, atlas.texture)
+      .vec2('uDev', this.devW, this.devH)
       .ivec2('uCellPx', atlas.cellW, atlas.cellH)
       .ivec2('uOrigin', this.originX, this.originY)
       .ivec2('uGrid', this.cols, this.rows)
       .int('uCanvasH', this.devH)
-      .vec3('uBg', ...look.bg)
-      .vec3('uRawBg', ...POND_BG)
+      .vec3('uBg', look.bg[0], look.bg[1], look.bg[2])
+      .vec3('uRawBg', POND_BG[0], POND_BG[1], POND_BG[2])
       .int('uRaw', this.raw ? 1 : 0)
       .int('uLook', look.look)
-      .vec3('uOutBg', ...look.outBg)
+      .vec3('uOutBg', look.outBg[0], look.outBg[1], look.outBg[2])
       .vec3s('uStops', this.stopBuf)
+      .vec3s('uStopDeltas', this.stopDeltaBuf)
       .int('uStopCount', palette.mode === 'ramp' ? palette.stops.length : 2)
-      .vec3('uTint', ...(filter?.tint ?? WHITE))
+      .vec3('uTint', tint[0], tint[1], tint[2])
       .float('uSaturation', filter?.saturation ?? 1)
       .int('uInvert', filter?.invert ? 1 : 0)
       .float('uIntensity', this.raw ? 1 : this.intensity);
@@ -390,20 +491,26 @@ export class Renderer {
       // Bound in the raw view too (stale there, but the raw branch never reads it).
       ascii
         .texture('uGlow', 3, this.glowTarget.textures[0])
-        .vec2('uGlowScale', 1 / (this.cols * atlas.cellW), 1 / (this.rows * atlas.cellH));
+        .vec2('uGlowScale', 1 / (this.cols * atlas.cellW), 1 / (this.rows * atlas.cellH))
+        .int('uGlowOn', haloDrawn ? 1 : 0);
     }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
   /** Moves up to MAX_DROPS pending impulses into the uniform buffer, in sim texels. */
   private takeDrops(pond: Pond): number {
-    const batch = pond.drops.splice(0, MAX_DROPS);
-    batch.forEach((d, i) => {
+    const drops = pond.drops;
+    const n = Math.min(drops.length, MAX_DROPS);
+    for (let i = 0; i < n; i++) {
+      const d = drops[i];
       this.dropBuf[i * 4] = d.x / RIPPLE_PX;
       this.dropBuf[i * 4 + 1] = d.y / RIPPLE_PX;
       this.dropBuf[i * 4 + 2] = Math.max(d.r / RIPPLE_PX, 1.5);
       this.dropBuf[i * 4 + 3] = d.a;
-    });
-    return batch.length;
+    }
+    // The rest move up to the front, still oldest first.
+    drops.copyWithin(0, n);
+    drops.length -= n;
+    return n;
   }
 }

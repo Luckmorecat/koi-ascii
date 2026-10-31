@@ -1,4 +1,4 @@
-import { J_BODY, J_TAIL, J_TOTAL, TRAIL_N } from './layout';
+import { J_BODY, J_TAIL, J_TOTAL, TRAIL_CHUNK, TRAIL_CHUNKS, TRAIL_N } from './layout';
 import type { Variety } from './varieties';
 import { Rng, noise1 } from '../rng';
 
@@ -30,6 +30,10 @@ function profile(u: number): number {
   return PROFILE[PROFILE.length - 1][1];
 }
 
+/** profile() at each body joint, u = i / (J_BODY - 1); the same for every fish and frame. */
+const JOINT_PROFILE = Float64Array.from({ length: J_BODY }, (_, i) => profile(i / (J_BODY - 1)));
+const PEDUNCLE_PROFILE = profile(1);
+
 const clamp = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi ? hi : x);
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -38,6 +42,9 @@ function smoothstep(e0: number, e1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** How far tail joint J_BODY + n has spread from the peduncle width to the full tail width. */
+const TAIL_SPREAD = Float64Array.from({ length: J_TAIL }, (_, n) => Math.pow(smoothstep(0, 0.85, (n + 1) / J_TAIL), 0.75));
+
 function wrapAngle(a: number): number {
   a = (a + Math.PI) % TAU;
   return (a < 0 ? a + TAU : a) - Math.PI;
@@ -45,6 +52,33 @@ function wrapAngle(a: number): number {
 
 /** Frame-rate independent smoothing factor. */
 const ease = (rate: number, dt: number) => 1 - Math.exp(-rate * dt);
+
+/**
+ * Math.hypot(x, y) to the bit, but inlinable: V8 never inlines its builtin, so
+ * each call boxes both arguments and the result as heap numbers. For two
+ * arguments the builtin's normalised Kahan sum comes down to this. The NaN case
+ * returns ax + ay, not the global NaN: that load never runs, so TurboFan leaves
+ * it untyped and would box every inlined call's result.
+ */
+function hypot(x: number, y: number): number {
+  const ax = Math.abs(x);
+  const ay = Math.abs(y);
+  if (ax === Infinity || ay === Infinity) return Infinity;
+  if (ax !== ax || ay !== ay) return ax + ay;
+  const hi = ax > ay ? ax : ay;
+  if (hi === 0) return 0;
+  const q = (ax > ay ? ay : ax) / hi;
+  return Math.sqrt(1 + q * q) * hi;
+}
+
+/**
+ * Age at which writeTrail ends a trail. Ages only grow along it, so a segment
+ * cut off joins samples at least this old, where trails.glsl's I is at most
+ * 0.15^1.3 < 0.085; even times the largest variety factor, 1.3 (gnoise stays
+ * within [-1, 1]), that is under the 0.12 a trail cell needs. So the strongest
+ * segment of any cell drawn is kept, and is still the first that strong.
+ */
+const TRAIL_CUT = 0.85;
 
 export type Mode = 'cruise' | 'burst' | 'glide' | 'hover' | 'flee';
 
@@ -85,6 +119,8 @@ export class Koi {
   readonly patternSeed: number;
   private readonly rng: Rng;
   private readonly noiseSeed: number;
+  /** cos and sin of +maxBend, then of -maxBend: body joints from 0, tail joints from 4. */
+  private readonly bendTrig: Float64Array;
 
   length = 1;
   x = 0;
@@ -114,6 +150,8 @@ export class Koi {
   private nextRipple = 0;
   private nextGulp = 0;
   private posed = false;
+  /** sampleBody's result: x, y, radius, then the backward axis bx, by. Each call overwrites it. */
+  private readonly sample = new Float64Array(5);
 
   /** Spine centreline that follows the head's path: x, y per joint. */
   private readonly spine = new Float32Array(J_TOTAL * 2);
@@ -128,8 +166,10 @@ export class Koi {
   eyeRadius = 1;
   /** Bounds of body and fins: min.xy, max.xy. */
   readonly bbox = new Float32Array(4);
-  /** Bounds of the trail written by the last writeTrail call. */
+  /** Bounds of the trail written by the last writeTrail call: the union of trailChunks. */
   readonly trailBox = new Float32Array(4);
+  /** Bounds of each chunk of that trail: min.xy, max.xy per chunk (see writeTrail). */
+  readonly trailChunks = new Float32Array(TRAIL_CHUNKS * 4);
 
   /** Ring buffer of trail samples: x, y, time. */
   private readonly trail = new Float32Array((TRAIL_N - 1) * 3);
@@ -139,6 +179,9 @@ export class Koi {
 
   constructor(variety: Variety, seed: number, world: World) {
     this.variety = variety;
+    this.bendTrig = Float64Array.from(
+      [variety.bodyBend, variety.tailBend].flatMap((m) => [Math.cos(m), Math.sin(m), Math.cos(-m), Math.sin(-m)]),
+    );
     this.rng = new Rng(seed);
     this.noiseSeed = this.rng.range(0, 100);
     this.patternSeed = this.rng.range(0, 40);
@@ -238,13 +281,13 @@ export class Koi {
     const t = w.time;
     const ptr = w.pointer;
     const ptrActive = (ptr.inside || ptr.linger) && t - ptr.lastMove < v.attention;
-    const pd = ptrActive ? Math.hypot(ptr.x - this.x, ptr.y - this.y) : Infinity;
+    const pd = ptrActive ? hypot(ptr.x - this.x, ptr.y - this.y) : Infinity;
 
     // --- reactions to taps and sudden pointer motion
     for (const tap of w.taps) {
       if (tap.t <= this.lastTap) continue;
       this.lastTap = tap.t;
-      const d = Math.hypot(tap.x - this.x, tap.y - this.y);
+      const d = hypot(tap.x - this.x, tap.y - this.y);
       if (!w.calm && d < w.unit * 0.55 * v.skittish) {
         this.startle(tap.x, tap.y, t, w);
       } else if (v.roams && d < w.unit * 1.5) {
@@ -295,14 +338,14 @@ export class Koi {
     else if (ax > w.width - margin) sx -= ((ax - (w.width - margin)) / margin) * 3;
     if (ay < margin) sy += ((margin - ay) / margin) * 3;
     else if (ay > w.height - margin) sy -= ((ay - (w.height - margin)) / margin) * 3;
-    const wallK = Math.hypot(sx - sx0, sy - sy0);
+    const wallK = hypot(sx - sx0, sy - sy0);
 
     // Personal space from fish at a similar depth; deeper/shallower ones can pass over.
     for (const o of w.fish) {
       if (o === this) continue;
       const dx = this.x - o.x;
       const dy = this.y - o.y;
-      const d = Math.hypot(dx, dy);
+      const d = hypot(dx, dy);
       const range = (L + o.length) * 0.5;
       const dz = Math.abs(this.depth - o.depth);
       if (d > 1e-3 && d < range && dz < 0.3) {
@@ -343,7 +386,7 @@ export class Koi {
         // Somewhere worth swimming to, not right under its nose.
         const pick = () => ({ x: w.width * this.rng.range(0.15, 0.85), y: w.height * this.rng.range(0.15, 0.85) });
         let poi = pick();
-        for (let k = 0; k < 6 && Math.hypot(poi.x - this.x, poi.y - this.y) < 0.35 * w.unit; k++) poi = pick();
+        for (let k = 0; k < 6 && hypot(poi.x - this.x, poi.y - this.y) < 0.35 * w.unit; k++) poi = pick();
         this.poi = poi;
         this.poiUntil = t + this.rng.range(8, 14);
       }
@@ -358,7 +401,7 @@ export class Koi {
     if (tw !== 0) {
       const dx = tx - this.x;
       const dy = ty - this.y;
-      td = Math.hypot(dx, dy);
+      td = hypot(dx, dy);
       if (td > 1e-3) {
         // Stop chasing a target that is already under the nose, or the fish coils around it.
         const near = tw > 0 ? smoothstep(L * 0.25, L * 0.6, td) : 1;
@@ -467,7 +510,7 @@ export class Koi {
   private startle(x: number, y: number, t: number, w: World): void {
     const dx = this.x - x;
     const dy = this.y - y;
-    const d = Math.hypot(dx, dy) || 1;
+    const d = hypot(dx, dy) || 1;
     this.fleeX = dx / d;
     this.fleeY = dy / d;
     this.mode = 'flee';
@@ -498,7 +541,7 @@ export class Koi {
       const maxBend = i < J_BODY ? v.bodyBend : v.tailBend;
       let dx = s[i * 2] - s[i * 2 - 2];
       let dy = s[i * 2 + 1] - s[i * 2 - 1];
-      const d = Math.hypot(dx, dy);
+      const d = hypot(dx, dy);
       if (d < 1e-6) {
         dx = px;
         dy = py;
@@ -506,11 +549,23 @@ export class Koi {
         dx /= d;
         dy /= d;
       }
-      const bend = Math.atan2(px * dy - py * dx, px * dx + py * dy);
-      if (Math.abs(bend) > maxBend) {
-        const a = Math.sign(bend) * maxBend;
-        const c = Math.cos(a);
-        const sn = Math.sin(a);
+      const cross = px * dy - py * dx;
+      const dot = px * dx + py * dy;
+      // For these unit vectors past = sin(|bend| - maxBend), which has the sign of
+      // |bend| - maxBend. Only a joint within rounding of the limit needs atan2 to
+      // decide as before; the rest skip it.
+      const t = i < J_BODY ? 0 : 4;
+      const past = Math.abs(cross) * this.bendTrig[t] - dot * this.bendTrig[t + 1];
+      let side = 0;
+      if (past > 1e-9 && cross !== 0) side = cross > 0 ? 1 : -1;
+      else if (past >= -1e-9) {
+        const bend = Math.atan2(cross, dot);
+        if (Math.abs(bend) > maxBend) side = Math.sign(bend);
+      }
+      if (side !== 0) {
+        // cos and sin of side * maxBend, the same values Math.cos/sin give for it.
+        const c = this.bendTrig[side > 0 ? t : t + 2];
+        const sn = this.bendTrig[side > 0 ? t + 1 : t + 3];
         dx = px * c - py * sn;
         dy = px * sn + py * c;
       }
@@ -529,14 +584,14 @@ export class Koi {
     const tailLen = L * v.tailLength;
     const total = L + tailLen;
     const maxR = v.radius * L;
-    const pedR = maxR * profile(1);
+    const pedR = maxR * PEDUNCLE_PROFILE;
 
     for (let i = 0; i < J_TOTAL; i++) {
       const i0 = Math.max(i - 1, 0);
       const i1 = Math.min(i + 1, J_TOTAL - 1);
       let tx = s[i1 * 2] - s[i0 * 2];
       let ty = s[i1 * 2 + 1] - s[i0 * 2 + 1];
-      const tl = Math.hypot(tx, ty) || 1;
+      const tl = hypot(tx, ty) || 1;
       tx /= tl;
       ty /= tl;
       let a: number;
@@ -545,11 +600,11 @@ export class Koi {
       if (i < J_BODY) {
         const u = i / (J_BODY - 1);
         a = (u * L) / total;
-        r = maxR * profile(u);
+        r = maxR * JOINT_PROFILE[i];
       } else {
         const k = (i - J_BODY + 1) / J_TAIL;
         a = (L + k * tailLen) / total;
-        r = pedR + (maxR * v.tailSpread - pedR) * Math.pow(smoothstep(0, 0.85, k), 0.75);
+        r = pedR + (maxR * v.tailSpread - pedR) * TAIL_SPREAD[i - J_BODY];
         lag = k * v.tailBend * 1.6;
       }
       const off = this.amp * (0.1 + 0.9 * a * a) * Math.sin(TAU * v.waveK * a - this.phase - lag);
@@ -566,16 +621,25 @@ export class Koi {
     const finLen = v.finLength * L;
     this.pecMax = v.finWidth * L;
     this.pecRoot = this.pecMax * 0.4;
+    // sampleBody reuses one array, so each sample is copied out before the next call.
     const root = this.sampleBody(0.2);
+    const rootX = root[0];
+    const rootY = root[1];
+    const rootR = root[2];
+    const rootBx = root[3];
+    const rootBy = root[4];
+    // The fish's left in y-down screen space.
+    const rootNx = -rootBy;
+    const rootNy = rootBx;
     for (let side = -1; side <= 1; side += 2) {
       const out = side > 0 ? this.pecL : this.pecR;
       const ang = sweep + slow * 0.35 * Math.sin(t * 3.4 + (side > 0 ? 0 : Math.PI));
       const c = Math.cos(ang);
       const sn = Math.sin(ang) * side;
-      const dx = root.bx * c + root.nx * sn;
-      const dy = root.by * c + root.ny * sn;
-      const rx = root.x + root.nx * side * root.r * 0.85;
-      const ry = root.y + root.ny * side * root.r * 0.85;
+      const dx = rootBx * c + rootNx * sn;
+      const dy = rootBy * c + rootNy * sn;
+      const rx = rootX + rootNx * side * rootR * 0.85;
+      const ry = rootY + rootNy * side * rootR * 0.85;
       let tipX = rx + dx * finLen;
       let tipY = ry + dy * finLen;
       if (this.posed) {
@@ -584,7 +648,7 @@ export class Koi {
         tipY = lerp(out[3], tipY, k);
         const lx = tipX - rx;
         const ly = tipY - ry;
-        const ll = Math.hypot(lx, ly) || 1;
+        const ll = hypot(lx, ly) || 1;
         tipX = rx + (lx / ll) * finLen;
         tipY = ry + (ly / ll) * finLen;
       }
@@ -595,10 +659,15 @@ export class Koi {
     }
 
     const head = this.sampleBody(0.075);
-    this.eyeRadius = Math.max(head.r * 0.17, 1);
+    const headX = head[0];
+    const headY = head[1];
+    const headR = head[2];
+    const headNx = -head[4];
+    const headNy = head[3];
+    this.eyeRadius = Math.max(headR * 0.17, 1);
     for (let side = 1, o = 0; side >= -1; side -= 2, o += 2) {
-      this.eyes[o] = head.x + head.nx * side * head.r * 0.55;
-      this.eyes[o + 1] = head.y + head.ny * side * head.r * 0.55;
+      this.eyes[o] = headX + headNx * side * headR * 0.55;
+      this.eyes[o + 1] = headY + headNy * side * headR * 0.55;
     }
 
     let minX = Infinity;
@@ -612,7 +681,8 @@ export class Koi {
       maxX = Math.max(maxX, j[i * 3] + r);
       maxY = Math.max(maxY, j[i * 3 + 1] + r);
     }
-    for (const fin of [this.pecL, this.pecR]) {
+    for (let f = 0; f < 2; f++) {
+      const fin = f ? this.pecR : this.pecL;
       for (let k = 0; k < 4; k += 2) {
         minX = Math.min(minX, fin[k] - this.pecMax);
         minY = Math.min(minY, fin[k + 1] - this.pecMax);
@@ -627,8 +697,11 @@ export class Koi {
     this.posed = true;
   }
 
-  /** Point on the rendered body centreline at u (0 nose .. 1 peduncle). */
-  private sampleBody(u: number) {
+  /**
+   * Point on the rendered body centreline at u (0 nose .. 1 peduncle), with
+   * its radius and backward (head → tail) axis, written into `sample`.
+   */
+  private sampleBody(u: number): Float64Array {
     const j = this.joints;
     const f = u * (J_BODY - 1);
     const i = Math.min(Math.floor(f), J_BODY - 2);
@@ -637,20 +710,16 @@ export class Koi {
     const b = Math.min(i + 2, J_BODY - 1);
     let bx = j[b * 3] - j[a * 3];
     let by = j[b * 3 + 1] - j[a * 3 + 1];
-    const bl = Math.hypot(bx, by) || 1;
+    const bl = hypot(bx, by) || 1;
     bx /= bl;
     by /= bl;
-    return {
-      x: lerp(j[i * 3], j[(i + 1) * 3], k),
-      y: lerp(j[i * 3 + 1], j[(i + 1) * 3 + 1], k),
-      r: lerp(j[i * 3 + 2], j[(i + 1) * 3 + 2], k),
-      /** backward (head → tail) axis */
-      bx,
-      by,
-      /** fish's left in y-down screen space */
-      nx: -by,
-      ny: bx,
-    };
+    const o = this.sample;
+    o[0] = lerp(j[i * 3], j[(i + 1) * 3], k);
+    o[1] = lerp(j[i * 3 + 1], j[(i + 1) * 3 + 1], k);
+    o[2] = lerp(j[i * 3 + 2], j[(i + 1) * 3 + 2], k);
+    o[3] = bx;
+    o[4] = by;
+    return o;
   }
 
   /**
@@ -680,37 +749,65 @@ export class Koi {
 
   /**
    * Writes trail samples newest-first as texels (x, y, age, 0) starting at
-   * `base`, beginning with the live tail-tip position. Returns the count.
+   * `base`, beginning with the live tail-tip position and ending with the
+   * first sample TRAIL_CUT old. Returns the count.
+   * Chunk c of trailChunks bounds segments 1 + c * TRAIL_CHUNK to
+   * (c + 1) * TRAIL_CHUNK (segment k joins samples k - 1 and k), grown by the
+   * width they draw at the chunk's oldest sample (trails.glsl trailSeg, less
+   * its cell term, which the shader adds) and 1 px for rounding; a chunk past
+   * the last segment is empty. trailBox is their union, empty with no segments.
    */
   writeTrail(out: Float32Array, base: number, t: number): number {
     const cap = TRAIL_N - 1;
     const life = this.variety.trailTime;
-    let [x, y] = this.trailPoint();
+    const [x, y] = this.trailPoint();
     out[base] = x;
     out[base + 1] = y;
     out[base + 2] = 0;
     out[base + 3] = 0;
-    let minX = x;
-    let minY = y;
-    let maxX = x;
-    let maxY = y;
     let n = 1;
     for (let k = 0; k < this.trailLen; k++) {
       const idx = (this.trailHead - 1 - k + cap) % cap;
       const age = (t - this.trail[idx * 3 + 2]) / life;
-      x = this.trail[idx * 3];
-      y = this.trail[idx * 3 + 1];
       const o = base + n * 4;
-      out[o] = x;
-      out[o + 1] = y;
+      out[o] = this.trail[idx * 3];
+      out[o + 1] = this.trail[idx * 3 + 1];
       out[o + 2] = Math.min(age, 1);
       out[o + 3] = 0;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
       n++;
-      if (age >= 1) break;
+      if (age >= TRAIL_CUT) break;
+    }
+    const boxes = this.trailChunks;
+    const w0 = this.variety.trailWidth * this.length;
+    let minX = 1e9;
+    let minY = 1e9;
+    let maxX = -1e9;
+    let maxY = -1e9;
+    for (let c = 0; c < TRAIL_CHUNKS; c++) {
+      const first = c * TRAIL_CHUNK;
+      const last = first + 1 < n ? Math.min(first + TRAIL_CHUNK, n - 1) : -1;
+      let x0 = 1e9;
+      let y0 = 1e9;
+      let x1 = -1e9;
+      let y1 = -1e9;
+      let maxAge = 0;
+      for (let i = first; i <= last; i++) {
+        const o = base + i * 4;
+        x0 = Math.min(x0, out[o]);
+        y0 = Math.min(y0, out[o + 1]);
+        x1 = Math.max(x1, out[o]);
+        y1 = Math.max(y1, out[o + 1]);
+        maxAge = Math.max(maxAge, out[o + 2]);
+      }
+      const g = last < 0 ? 0 : w0 * (0.5 + 1.4 * maxAge) + 1;
+      boxes[c * 4] = x0 - g;
+      boxes[c * 4 + 1] = y0 - g;
+      boxes[c * 4 + 2] = x1 + g;
+      boxes[c * 4 + 3] = y1 + g;
+      minX = Math.min(minX, boxes[c * 4]);
+      minY = Math.min(minY, boxes[c * 4 + 1]);
+      maxX = Math.max(maxX, boxes[c * 4 + 2]);
+      maxY = Math.max(maxY, boxes[c * 4 + 3]);
     }
     this.trailBox[0] = minX;
     this.trailBox[1] = minY;

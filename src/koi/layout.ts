@@ -11,6 +11,9 @@ export const J_TOTAL = J_BODY + J_TAIL;
 
 /** Trail samples per fish, newest first. */
 export const TRAIL_N = 40;
+/** Trail segments per chunk box, so the scene shader can skip runs of them at once. */
+export const TRAIL_CHUNK = 8;
+export const TRAIL_CHUNKS = Math.ceil((TRAIL_N - 1) / TRAIL_CHUNK);
 
 /** joint i: x, y, radius, 0 */
 export const T_PEC_L = J_TOTAL; // root.xy, tip.xy
@@ -19,10 +22,11 @@ export const T_FIN = J_TOTAL + 2; // pectoral root radius, pectoral max radius, 
 export const T_EYE = J_TOTAL + 3; // left.xy, right.xy
 export const T_P0 = J_TOTAL + 4; // variety id, pattern seed, eye radius, depth
 export const T_BBOX = J_TOTAL + 5; // body + fins bounds: min.xy, max.xy
-export const T_TBOX = J_TOTAL + 6; // trail bounds: min.xy, max.xy
+export const T_TBOX = J_TOTAL + 6; // trail bounds: the union of its T_CBOX boxes, +-1e9 without segments
 export const T_P1 = J_TOTAL + 7; // trail sample count, trail width, 0, 0
 export const T_TRAIL = J_TOTAL + 8; // x, y, age (0 = fresh, 1 = gone), 0
-export const FISH_TEXELS = T_TRAIL + TRAIL_N;
+export const T_CBOX = T_TRAIL + TRAIL_N; // per trail chunk: min.xy, max.xy, grown by its trail width (see Koi.writeTrail), +-1e9 when empty
+export const FISH_TEXELS = T_CBOX + TRAIL_CHUNKS;
 
 /** Ripple impulses accepted per simulation step. */
 export const MAX_DROPS = 32;
@@ -34,6 +38,8 @@ export function layoutDefines(): string {
     J_TAIL,
     J_TOTAL,
     TRAIL_N,
+    TRAIL_CHUNK,
+    TRAIL_CHUNKS,
     T_PEC_L,
     T_PEC_R,
     T_FIN,
@@ -43,6 +49,7 @@ export function layoutDefines(): string {
     T_TBOX,
     T_P1,
     T_TRAIL,
+    T_CBOX,
     MAX_DROPS,
   };
   return Object.entries(defs)

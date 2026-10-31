@@ -4,35 +4,20 @@
 // texture fetch. Cells are about twice as tall as wide, so the kernel spans
 // twice as many columns as rows to stay round on screen.
 
-uniform sampler2D uScene0;
-uniform sampler2D uScene1;
-uniform ivec2 uGrid;   // cols, rows
+uniform ivec2 uGrid;   // cols, rows; read only without EMIT_TEX
 uniform float uAspect; // cell width / cell height
 uniform float uGain;   // time-of-day glow strength × overall gain
 
 out vec4 oGlow;
 
-#define RX 4
-#define RY 2
+// RX, RY: the kernel's reach in cells either side, from the renderer.
 
-// Light a cell gives off: only its brightest colours, scaled by how much ink
-// the glyph puts down, with glints and eyes counting most. Plain water gives
-// none, so the halo marks highlights rather than lifting the whole pond.
-vec3 emission(ivec2 cell) {
-  vec4 s0 = texelFetch(uScene0, cell, 0);
-  int mat = int(texelFetch(uScene1, cell, 0).g * 255.0 + 0.5);
-  float w = mat == M_FLY ? 1.3
-          : mat == M_GLINT ? 1.0
-          : mat == M_SUN ? 1.2
-          : mat == M_EYE ? 0.7
-          : mat == M_MOON ? 0.5
-          : mat == M_STAR ? 0.35
-          : mat == M_RIPPLE ? 0.45
-          : mat == M_BODY || mat == M_EDGE || mat == M_FIN ? 0.4
-          : 0.0;
-  float lum = dot(s0.rgb, vec3(0.299, 0.587, 0.114));
-  return s0.rgb * (w * s0.a * smoothstep(0.3, 0.85, lum));
-}
+#ifdef EMIT_TEX
+// Each cell's emission() (emission.glsl), stored by the emission pass inside
+// a zero border RX columns and RY rows wide, so off-grid taps add nothing.
+// Without EMIT_TEX the renderer puts emission.glsl in front of this file.
+uniform sampler2D uEmit;
+#endif
 
 void main() {
   ivec2 cell = ivec2(gl_FragCoord.xy);
@@ -44,9 +29,17 @@ void main() {
       vec2 d = vec2(float(x) * uAspect, float(y));
       float k = exp(-dot(d, d) * 0.6);
       wsum += k;
+#ifdef EMIT_TEX
+      vec4 e = texelFetch(uEmit, cell + ivec2(x + RX, y + RY), 0);
+      sum += e.rgb * e.a * k;
+#else
       ivec2 n = cell + ivec2(x, y);
-      if (any(lessThan(n, ivec2(0))) || any(greaterThanEqual(n, uGrid))) continue;
-      sum += emission(n) * k;
+      // Fetch every tap, clamped into the grid, and drop the off-grid ones at
+      // the add: skipping before the fetches would keep them from batching.
+      ivec2 nc = clamp(n, ivec2(0), uGrid - 1);
+      vec4 e = emission(nc);
+      if (all(equal(n, nc))) sum += e.rgb * e.a * k;
+#endif
     }
   }
   // Soft knee: dense glints (a dusk crest) saturate toward ~0.4 instead of

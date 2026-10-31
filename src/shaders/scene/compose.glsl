@@ -162,12 +162,21 @@ void drawFish(int f, vec2 p, vec2 refr, inout Cell c) {
 
   // Eyes: always claim the cell nearest their centre so they never vanish.
   vec4 E = F(f, T_EYE);
+  // Ripple heights stay in [-1, 1] (ripple.frag clamps them), so each refrAt
+  // component is at most REFRACT / uRipplePx and an eye shifts at most that times
+  // |0.5 + depth|. Cells farther away than the shift, half a cell and 1 px of
+  // slack can't take the eye, so they skip its ripple reads.
+  vec2 eyeReach = 0.5 * uCell + REFRACT / uRipplePx * abs(0.5 + depth) + 1.0;
   for (int s = 0; s < 2; s++) {
     vec2 e = s == 0 ? E.xy : E.zw;
-    // Refraction taken at the eye, not per cell: adjacent cells refract by different
-    // amounts, so per-cell offsets can leave the eye with no cell (or two).
-    vec2 de = abs(p + refrAt(e) * (0.5 + depth) - e);
-    if (length(q - e) < P0.z || (de.x < uCell.x * 0.5 && de.y < uCell.y * 0.5)) {
+    bool hit = length(q - e) < P0.z;
+    if (!hit && all(lessThanEqual(abs(p - e), eyeReach))) {
+      // Refraction taken at the eye, not per cell: adjacent cells refract by different
+      // amounts, so per-cell offsets can leave the eye with no cell (or two).
+      vec2 de = abs(p + refrAt(e) * (0.5 + depth) - e);
+      hit = de.x < uCell.x * 0.5 && de.y < uCell.y * 0.5;
+    }
+    if (hit) {
       c.mat = M_EYE;
       c.col = mix(uEyeCol * max(flatLight, vec3(0.75)), fogCol, fog * 0.5);
       c.dens = 1.0;

@@ -14,6 +14,7 @@ const ALLOWED = new Set([
   'vec3(1.0)', // glints, moon shards and the sun's glitter whiten toward white (light, not pigment)
   'vec3(0.2126, 0.7152, 0.0722)', // Rec.709 luminance weights
   'vec3(0.75)', // eyes never darker than this share of the light
+  'vec3(0.0)', // the fish layer's unclaimed start (main.frag), discarded unless a fish claims the cell
 ]);
 
 // The time-of-day lighting (lighting.ts); every other vec3 uniform is a colour.

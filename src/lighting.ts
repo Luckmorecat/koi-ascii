@@ -197,24 +197,36 @@ const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 const mix3 = (a: Vec3, b: Vec3, t: number): Vec3 => [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2], t)];
 
 /**
- * Direction toward a body on an arc that rises at angle 0 (screen left) and
- * sets at π (screen right), with elevation lo..hi following sin(angle).
+ * Scratch that azimuth() (x, y, length) and arcDir() (sun, moon) write into, so a frame
+ * allocates no temporaries: single-threaded, and each is read straight after its write.
  */
-function arcDir(angle: number, lo: number, hi: number): Vec3 {
+const AZ = new Float64Array(3);
+const SUN_D = new Float64Array(3);
+const MOON_D = new Float64Array(3);
+
+/**
+ * Direction toward a body, into `out`, on an arc that rises at angle 0 (screen
+ * left) and sets at π (screen right), with elevation lo..hi following sin(angle).
+ */
+function arcDir(angle: number, lo: number, hi: number, out: Float64Array): void {
   const el = mix(lo, hi, Math.max(0, Math.sin(angle)));
-  const { x, y, length } = azimuth(angle);
-  const h = Math.cos(el) / length;
-  return [x * h, y * h, Math.sin(el)];
+  azimuth(angle);
+  const h = Math.cos(el) / AZ[2];
+  out[0] = AZ[0] * h;
+  out[1] = AZ[1] * h;
+  out[2] = Math.sin(el);
 }
 
-/** A body's azimuth on screen at `angle` (see arcDir), tilted; its length is the same before and after. */
-function azimuth(angle: number): { x: number; y: number; length: number } {
+/** A body's azimuth on screen at `angle` (see arcDir), tilted, into AZ; its length is the same before and after. */
+function azimuth(angle: number): void {
   // Before tilt: rises left, crosses the top of the screen, sets right.
   const ax = -Math.cos(angle);
   const ay = -0.8 * Math.sin(angle);
   const c = Math.cos(PATH_TILT);
   const s = Math.sin(PATH_TILT);
-  return { x: ax * c - ay * s, y: ax * s + ay * c, length: Math.hypot(ax, ay) || 1 };
+  AZ[0] = ax * c - ay * s;
+  AZ[1] = ax * s + ay * c;
+  AZ[2] = Math.hypot(ax, ay) || 1;
 }
 
 /** Half-extents of the path reflections follow, as a share of the pond's width and height. */
@@ -247,7 +259,9 @@ const SUN_PACE = (2 * HANDOFF[0]) / (1 - 2 * HANDOFF[1]);
  * keeps clear of the middle 40 % of the pond at any aspect (P1).
  */
 function bodyPos(angle: number): [number, number] {
-  const { x, y } = azimuth(angle);
+  azimuth(angle);
+  const x = AZ[0];
+  const y = AZ[1];
   const n = (Math.abs(x) / BODY_BAND[0]) ** BODY_ROUND + (Math.abs(y) / BODY_BAND[1]) ** BODY_ROUND;
   const k = n ** (-1 / BODY_ROUND);
   return [0.5 + x * k, 0.5 + y * k];
@@ -339,12 +353,14 @@ export function lightingAt(phase: number, options: LightingOptions = {}): Lighti
 
   // Sun up from 0.25 to 0.75, moon from 0.75 to 0.25; both held at least at
   // their low elevation so the blend below never passes through the horizon.
-  const sun = arcDir(TAU * (p - 0.25), SUN_LOW, SUN_HIGH);
-  const moon = arcDir(TAU * (p - 0.75), MOON_LOW, MOON_HIGH);
+  arcDir(TAU * (p - 0.25), SUN_LOW, SUN_HIGH, SUN_D);
+  arcDir(TAU * (p - 0.75), MOON_LOW, MOON_HIGH, MOON_D);
   const w = smooth(HANDOFF[0], HANDOFF[1], p) * (1 - smooth(1 - HANDOFF[1], 1 - HANDOFF[0], p));
-  const d = mix3(moon, sun, w);
-  const dl = Math.hypot(d[0], d[1], d[2]);
-  const dir: Vec3 = [d[0] / dl, d[1] / dl, d[2] / dl];
+  const d0 = mix(MOON_D[0], SUN_D[0], w);
+  const d1 = mix(MOON_D[1], SUN_D[1], w);
+  const d2 = mix(MOON_D[2], SUN_D[2], w);
+  const dl = Math.hypot(d0, d1, d2);
+  const dir: Vec3 = [d0 / dl, d1 / dl, d2 / dl];
 
   // Shadows fall away from the light, longer as it sinks.
   const horiz = Math.hypot(dir[0], dir[1]);
@@ -352,7 +368,12 @@ export function lightingAt(phase: number, options: LightingOptions = {}): Lighti
   const shadow: [number, number] = horiz > 1e-6 ? [(-dir[0] / horiz) * len, (-dir[1] / horiz) * len] : [0, 0];
 
   const floor = mix(a.floor, b.floor, t);
-  const water = mix3(a.water, b.water, t).map((v) => Math.max(v, floor)) as Vec3;
+  const water: Vec3 = [
+    Math.max(mix(a.water[0], b.water[0], t), floor),
+    Math.max(mix(a.water[1], b.water[1], t), floor),
+    Math.max(mix(a.water[2], b.water[2], t), floor),
+  ];
+  const night = options.darkNight ? nightWeight(p) : 0;
 
   return {
     dir,
@@ -366,14 +387,10 @@ export function lightingAt(phase: number, options: LightingOptions = {}): Lighti
     shadow,
     shadowAlpha: mix(a.shadowAlpha, b.shadowAlpha, t),
     glowStrength: mix(a.glow, b.glow, t),
-    ...darkNight(options.darkNight ? nightWeight(p) : 0),
+    // Exactly 1 when off or by day, so the shaders leave everything untouched (D4).
+    darkWater: night <= 0 ? 1 : mix(1, DARK_WATER, night),
+    darkCaustic: night <= 0 ? 1 : mix(1, DARK_CAUSTIC, night),
     moon: moonAt(p),
     sun: sunAt(p),
   };
-}
-
-function darkNight(night: number): Pick<Lighting, 'darkWater' | 'darkCaustic'> {
-  // Exactly 1 when off or by day, so the shaders leave everything untouched (D4).
-  if (night <= 0) return { darkWater: 1, darkCaustic: 1 };
-  return { darkWater: mix(1, DARK_WATER, night), darkCaustic: mix(1, DARK_CAUSTIC, night) };
 }
