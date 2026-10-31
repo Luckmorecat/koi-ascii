@@ -152,7 +152,8 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       zones.set(list);
     },
     setAvoidFade(next) {
-      if (destroyed) return;
+      // Like setAvoid: a failed pond accepts the call and does nothing (A3).
+      if (destroyed || failed) return;
       avoidFade = resolveAvoidFade(next, avoidFade);
       renderer?.setAvoidFade(avoidFade);
     },
