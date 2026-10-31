@@ -45,7 +45,7 @@ function mountPond(seed: number | undefined, time: KoiPondTime, look: PondLook, 
   fallback.hidden = true;
   // On every mount so a reseed (which carries the palette) recolours it.
   headline?.style.setProperty('--ink', inkOf(look.palette));
-  return createKoiPond(container, {
+  const pond = createKoiPond(container, {
     time,
     // Input on the canvas only, so using the debug panel never steers the fish.
     interactive: 'canvas',
@@ -64,6 +64,14 @@ function mountPond(seed: number | undefined, time: KoiPondTime, look: PondLook, 
       onError?.(error);
     },
   });
+  if (!headline) return pond;
+  // The debug palette switch goes through the handle, so recolour it there too.
+  const setPalette = pond.setPalette;
+  pond.setPalette = (next) => {
+    if (typeof next === 'string') headline.style.setProperty('--ink', inkOf(next));
+    setPalette(next);
+  };
+  return pond;
 }
 
 // Seed, time, palette, intensity and sky come from the URL (see scene.ts). ?debug is the only gate for
