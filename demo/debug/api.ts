@@ -188,6 +188,8 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
   const perf = new PerfRecorder();
   let paused = false;
   let profiling = false;
+  /** Zone outlines (showAvoid); a debug view, so not saved in the URL. */
+  let showAvoid = false;
   let viewport: { width?: number; height?: number; dpr?: number } | null = null;
   let current: Mount;
   let interval = 0;
@@ -219,6 +221,7 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
     if (!r) return;
     r.raw = scene.view === 'raw';
     r.glow = scene.glow;
+    r.showAvoid = showAvoid;
   };
 
   const mountPond = (seed: number): Mount => {
@@ -554,6 +557,26 @@ export function createApi({ container, scene: initial, mount }: ApiOptions): Koi
         applyRender(c);
         writeUrl();
         return state().render;
+      },
+    },
+    {
+      name: 'showAvoid',
+      description:
+        "Outlines the readability zones (the pond's avoid list, ?avoid in the demo) at their padded edge, in " +
+        'the debug red; the fade itself is unchanged. No argument toggles. The raw view shows no zones. Not ' +
+        'saved in the URL.',
+      inputSchema: {
+        type: 'object',
+        properties: { on: { type: 'boolean', description: 'Outlines on or off; leave out to toggle.' } },
+        additionalProperties: false,
+      },
+      annotations: { section: 'render' },
+      run: (args) => {
+        const c = core();
+        showAvoid = args.on === undefined ? !showAvoid : (args.on as boolean);
+        // Applied again when a lost context comes back.
+        applyRender(c);
+        return { on: showAvoid };
       },
     },
     {

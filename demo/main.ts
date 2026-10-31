@@ -1,6 +1,6 @@
 import '@fontsource/jetbrains-mono/latin-600.css';
 import './style.css';
-import { createKoiPond, type KoiPondError, type KoiPondTime } from '../src/index';
+import { createKoiPond, koiPalettes, type KoiPondError, type KoiPondPaletteName, type KoiPondTime } from '../src/index';
 import { readScene, sceneTime, type PondLook } from './scene';
 
 const container = document.getElementById('pond') as HTMLDivElement;
@@ -12,11 +12,39 @@ function fail(message: string): void {
   fallback.textContent = `><(((o>\n\n${message}`;
 }
 
+// ?avoid puts a headline over the pond and lists it as a readability zone, so
+// the pond fades under it. Made once here, not in mountPond, so a debug reseed
+// doesn't add a second one; pointer-events: none keeps the fish steerable
+// through it (input is on the canvas).
+const headline = new URLSearchParams(location.search).has('avoid') ? makeHeadline() : null;
+
+function makeHeadline(): HTMLElement {
+  const box = document.createElement('header');
+  box.id = 'headline';
+  const title = document.createElement('h1');
+  title.textContent = 'Still water, slow fish';
+  const line = document.createElement('p');
+  line.textContent = 'The pond fades under this text so it stays readable, and carries on everywhere else.';
+  box.append(title, line);
+  document.body.append(box);
+  return box;
+}
+
+/** A text colour that reads on the palette's background: its brightest ink. */
+function inkOf(name: KoiPondPaletteName): string {
+  const p = koiPalettes[name];
+  if (p.mode === 'ramp') return p.colors[p.colors.length - 1];
+  if (p.mode === 'roles') return p.highlight ?? '#dcecee';
+  return '#dcecee';
+}
+
 /** The page's one set of pond options; the debug layer remounts with it on reseed. */
 function mountPond(seed: number | undefined, time: KoiPondTime, look: PondLook, onError?: (error: KoiPondError) => void) {
   // A reseed after a failure gets a fresh chance: undo what fail() did.
   container.hidden = false;
   fallback.hidden = true;
+  // On every mount so a reseed (which carries the palette) recolours it.
+  headline?.style.setProperty('--ink', inkOf(look.palette));
   return createKoiPond(container, {
     time,
     // Input on the canvas only, so using the debug panel never steers the fish.
@@ -25,6 +53,7 @@ function mountPond(seed: number | undefined, time: KoiPondTime, look: PondLook, 
     palette: look.palette,
     intensity: look.intensity,
     sky: look.sky,
+    avoid: headline ? [headline] : undefined,
     onError: (error) => {
       console.error(error);
       fail(
