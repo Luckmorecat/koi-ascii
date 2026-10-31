@@ -30,7 +30,7 @@ This report covers a three-round exploration of where the pond spends GPU, CPU a
 | CPU | 7 | koi pose tables, a bit-exact `Math.hypot` replica, no per-frame array literals, a reused `sampleBody` array, no `lightingAt` temporaries, and a lighting memo |
 | bundle | 2 | `//` comments, indentation and trailing spaces stripped from the shipped GLSL |
 | docs | 2 | `docs/scene-features.md` brought up to date with the branch (ae57938), and this report |
-| tools | 5 | `npm run batch` (whole-batch GPU time), `npm run cpu` (CPU, allocation and time-advancing GPU per frame), `npm run startup` (compile, link and first frame), plus their CLAUDE.md lines |
+| tools | 6 | `npm run batch` (whole-batch GPU time), `npm run cpu` (CPU, allocation and time-advancing GPU per frame), `npm run startup` (compile, link and first frame), plus their CLAUDE.md lines, and a review fix to `startup.mjs --bundle` |
 
 ### Combined result against origin/main 23cd98e
 
@@ -644,7 +644,7 @@ Sources: `.claude/perf-lab/evidence/costmap.md` §6b (round 0), `.claude/perf-la
 - **Other dead weight at 872e201:**
   - ≈1.15 KB raw of debug-only plumbing in mount.ts and internal.ts (`.claude/perf-lab/evidence/r3/map/c/bundle/debug-plumbing.txt`);
   - 778 B of GLSL blank-line escapes (−186 B gzip).
-- **Tool caveat.** `bin/bundle-size.mjs` and `startup.mjs --bundle` find 0 of 22 shaders from 872e201 on, because the indentation strip defeats their matcher, so their GLSL-share rows read 0%. `.claude/perf-lab/evidence/r3/map/c/bundle/compose.mjs` matches correctly.
+- **Tool caveat.** `bin/bundle-size.mjs` and `startup.mjs --bundle` find 0 of 22 shaders from 872e201 on, because the indentation strip defeats their matcher, so their GLSL-share rows read 0%. `.claude/perf-lab/evidence/r3/map/c/bundle/compose.mjs` matches correctly. The shipped `startup.mjs --bundle` was fixed after these runs: it now also looks for each shader as the build strips it, and on the tip it finds 19 of 19 on origin/main and 22 of 22 on head, with the raw shares (33.3% and 22.7%) that Combined result gives.
 
 ### Unproven in the cost map
 
@@ -737,13 +737,13 @@ The branch puts 30 perf commits on origin/main 23cd98e: 11 from round 1, 8 from 
 
 - **(a) Row 8's subject was corrected.** Until the messages gained their numbers, the subject of this commit said "by 3", but the code unrolls by 4: `src/shaders/scene/trails.glsl` has `for (int j = 0; j < TRAIL_CHUNK; j += 4)`, guarded by `#error trails.glsl unrolls by 4`. `3440a41` now says "by 4".
 - **A cost from round 1 that no longer shows.** At integration 1 the stack raised cold first draw → gpu done by 22.5 to 30.5 ms against origin/main, a LOSS in 8 of 8 cells, bisected to row 5, `3cbb8ec` (lab stack 443f903; `.claude/perf-lab/evidence/int-r1/integration.md`). On the final tip against origin/main, that row is noise in all 8 cold cells, from -16.3% to +3.1% (`.claude/perf-lab/evidence/final/startup/startup-verdict.md`).
-- **Five tool commits follow the perf commits and are not in the table:** `5046709`, `9a08e97`, `28f2f6c`, `6d4e026`, `637f55d`, then ae57938 (three lines of `docs/scene-features.md`) and the commit that adds this report. They add `scripts/cpu.mjs`, `scripts/startup.mjs` and `scripts/batch.mjs`, their npm scripts, and the CLAUDE.md lines for them. `git diff --stat 0378378 637f55d` touches only CLAUDE.md, package.json and those three scripts (5 files, 2,008 insertions), with nothing under `src/`.
+- **Five tool commits follow the perf commits and are not in the table:** `5046709`, `9a08e97`, `28f2f6c`, `6d4e026`, `637f55d`, then ae57938 (three lines of `docs/scene-features.md`), the commit that adds this report, and a review fix to `startup.mjs --bundle` (Cost map). They add `scripts/cpu.mjs`, `scripts/startup.mjs` and `scripts/batch.mjs`, their npm scripts, and the CLAUDE.md lines for them. `git diff --stat 0378378 637f55d` touches only CLAUDE.md, package.json and those three scripts (5 files, 2,008 insertions), with nothing under `src/`.
 
 ## Combined result
 
 **What was compared.**
 
-- **Sides.** The full branch against origin/main 23cd98e. The blocks ran on e84cf1d, the branch before its commit messages gained their numbers; the rewording changed messages only, so 637f55d has the same tree (`git diff e84cf1d 637f55d` is empty) and the raw JSON records e84cf1d. The two commits on top, ae57938 and the report commit, change only `docs/`.
+- **Sides.** The full branch against origin/main 23cd98e. The blocks ran on e84cf1d, the branch before its commit messages gained their numbers; the rewording changed messages only, so 637f55d has the same tree (`git diff e84cf1d 637f55d` is empty) and the raw JSON records e84cf1d. The commits on top change only `docs/` and the `startup.mjs --bundle` matcher, nothing under `src/` or in the build.
 - **When and where.** Every block ran on 2026-10-28 between 22:42 and 23:09, in the boot that started 14:27 (rounds log), on the RX 9060 XT (radeonsi gfx1200 ACO via ANGLE-GL, Mesa 26.2.2). The perf, batch, CPU and start-up JSON all record that renderer string.
 - **Two runs per block.** Run 2 is a second process in the same boot, not a separate boot.
 - **Clean trees.** Both checkouts were clean, with 0 porcelain lines and HEAD e84cf1d / 23cd98e (`.claude/perf-lab/evidence/final/bundle/trees-clean.txt`, `.claude/perf-lab/evidence/final/checks/status-porcelain.txt`).
@@ -1212,7 +1212,7 @@ GPU clock over each batch trace (`.claude/perf-lab/evidence/final/batch/clock-su
 
 ## Architecture/design updates
 
-The branch is `perf/explore-2026-10-28`: 35 commits on origin/main 23cd98e up to 637f55d, 28 files, +2776 −215 (`git diff --stat origin/main 637f55d`), then ae57938 (three lines of `docs/scene-features.md`) and the report commit.
+The branch is `perf/explore-2026-10-28`: 35 commits on origin/main 23cd98e up to 637f55d, 28 files, +2776 −215 (`git diff --stat origin/main 637f55d`), then ae57938 (three lines of `docs/scene-features.md`), the report commit, and a review fix to `startup.mjs --bundle` (Cost map).
 
 - Its source tree equals the round-3 tip 431e4c3 at 0378378: `git diff --stat 431e4c3 0378378` is empty.
 - HEAD 637f55d adds the three tools, their npm scripts and the CLAUDE.md lines on top: 5 commits with no `src/` change. The final measure ran on e84cf1d, which has the same tree as 637f55d.
@@ -1249,7 +1249,7 @@ The table below gives each change's files and commits, and what a maintainer mus
 | **Lighting memo.** The renderer recomputes light, scene light, stars, flies and look only when the phase value, the resolved palette object or the sky object changes. | `src/renderer.ts` lines 103-105 and 296-306 | 3e62b1d, 6fb0e99 | `mount.ts` replaces the palette and sky objects on `setPalette` and `setSky`. A value that depends on anything else, or a palette or sky that is mutated in place, would go stale. |
 | **CPU sim.** `JOINT_PROFILE`, `PEDUNCLE_PROFILE` and `TAIL_SPREAD` are now tables. `bendTrig` skips `atan2`. A local `hypot` matches `Math.hypot` to the bit for two arguments and returns `ax + ay` on NaN. `sampleBody` writes into a reused `Float64Array(5)`. Per-frame array literals and spreads are gone. | `src/koi/koi.ts` lines 46-63, `src/pond.ts`, `src/lighting.ts`, `src/renderer.ts` | 083cb00, 9045b8f, f372e94, f693868, d05daa2 | No unit test covers the `hypot` replica; it is module-private. Its exactness evidence is only in `.claude/perf-lab/evidence/r2/r2-koi-hypot-replica/` (`chromium-bruteforce.json`, `lockstep-3000.txt`). |
 | **GLSL strip in the build.** `stripGlslComments()` removes `//` comments and per-line leading and trailing blanks from `.glsl`, `.frag` and `.vert` `?raw` imports. It keeps every line break, so `file:line` compile errors still map. It throws on `/*`, on `//…\` and on `\` continuations. | `vite.lib.config.ts` (exported), `vite.demo.config.ts` | 2728924, 7835893 | A shader that needs a block comment or a line continuation fails the build on purpose. |
-| **Three new measurement tools**, each with an npm script. | `scripts/batch.mjs` (189 lines), `scripts/cpu.mjs` (971), `scripts/startup.mjs` (842), `package.json` (`batch`, `cpu`, `startup`) | 5046709, 9a08e97, 28f2f6c, 6d4e026 | batch times whole frames; cpu advances time (sim, uploads, ripple; `--gpu`, `--alloc`, `--profile`); startup times compile, link, atlas, font and first frame (cold, warm, mesaWarm, diskWarm; `--bundle`). |
+| **Three new measurement tools**, each with an npm script. | `scripts/batch.mjs` (189 lines), `scripts/cpu.mjs` (971), `scripts/startup.mjs` (846), `package.json` (`batch`, `cpu`, `startup`) | 5046709, 9a08e97, 28f2f6c, 6d4e026 | batch times whole frames; cpu advances time (sim, uploads, ripple; `--gpu`, `--alloc`, `--profile`); startup times compile, link, atlas, font and first frame (cold, warm, mesaWarm, diskWarm; `--bundle`). |
 
 </details>
 
@@ -1467,7 +1467,7 @@ Further notes on the bundle:
   - Dropping JS comments is a lib-build setting in `vite.lib.config.ts`. It leaves `index.d.ts` unchanged and keeps the output readable, though dist line numbers shift.
   - Minifying also mangles names. CDN ESM users would get unreadable code, and bundling consumers usually minify anyway.
   - GLSL token minification breaks the `file:line` mapping of compile errors (`sceneLines` in `scene/index.ts`).
-- **Tool caveat.** `bin/bundle-size.mjs` and `startup.mjs --bundle` find 0 of 22 shaders in the 872e201 bundle, and 0 of 21 at d0a6f41, so their "GLSL share" rows read 0 %. They match GLSL with only the `//` comments stripped, but the build now also strips per-line blanks. `.claude/perf-lab/evidence/r3/map/c/bundle/compose.mjs` reproduces the exact plugin transform.
+- **Tool caveat.** `bin/bundle-size.mjs` and `startup.mjs --bundle` find 0 of 22 shaders in the 872e201 bundle, and 0 of 21 at d0a6f41, so their "GLSL share" rows read 0 %. They match GLSL with only the `//` comments stripped, but the build now also strips per-line blanks. `.claude/perf-lab/evidence/r3/map/c/bundle/compose.mjs` reproduces the exact plugin transform. The shipped `startup.mjs --bundle` has been fixed since (Cost map).
 
 ## Rejected
 

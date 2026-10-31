@@ -780,13 +780,17 @@ async function bundleSize(dir) {
   try {
     await build({ configFile: path.join(dir, 'vite.lib.config.ts'), root: dir, logLevel: 'error', build: { outDir, emptyOutDir: true } });
     const js = fs.readFileSync(path.join(outDir, 'index.js'), 'utf8');
-    // Each ?raw shader is inlined as one JSON-style string literal.
+    // Each ?raw shader is inlined as one JSON-style string literal: as written, or as
+    // stripGlslComments (vite.lib.config.ts) ships it.
+    const shipped = (src) => src.replace(/[ \t]*\/\/.*$/gm, '').replace(/^[ \t]+|[ \t]+$/gm, '');
     const shaderDir = path.join(dir, 'src', 'shaders');
     const files = fs
       .readdirSync(shaderDir, { recursive: true })
       .filter((f) => /\.(frag|vert|glsl)$/.test(f))
       .map((f) => fs.readFileSync(path.join(shaderDir, f), 'utf8'));
-    const literals = files.map((src) => ({ src, lit: JSON.stringify(src) })).filter(({ lit }) => js.includes(lit));
+    const literals = files
+      .map((src) => ({ src, lit: [src, shipped(src)].map((s) => JSON.stringify(s)).find((lit) => js.includes(lit)) }))
+      .filter(({ lit }) => lit);
     const swap = (fn) => literals.reduce((s, { src, lit }) => s.replace(lit, () => JSON.stringify(fn(src))), js);
     const sizes = (text) => {
       const buf = Buffer.from(text);
