@@ -1,4 +1,5 @@
 import type { KoiPond, KoiPondError, KoiPondErrorCode, KoiPondOptions } from './index';
+import { AvoidZones, resolveAvoidFade } from './avoid';
 import { FONT_WEIGHT } from './glyphs';
 import { register, type PondCore, type PondStats } from './internal';
 import { parseCssColor, resolveIntensity, resolvePalette } from './palette';
@@ -33,12 +34,20 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       ? options.seed >>> 0
       : (Math.random() * 2 ** 32) >>> 0;
   const sky = new Sky(timeSource(options.time, 0));
+  // Kept apart from `options` so the closures below don't hold the whole
+  // object, and with it the `avoid` elements past setAvoid([]) or destroy().
+  const { background, onError } = options;
   // The look lives here, not in the Renderer, so it survives a lost context
   // (a restored context builds a fresh Renderer) and a setter called before
   // the renderer is up.
   let palette = resolvePalette(options.palette, parseCssColor);
   let intensity = resolveIntensity(options.intensity, 1, true);
   let skyFeatures = resolveSky(options.sky);
+  // Readability zones, held here like the look. Their border radii are first
+  // read on the first frame's resize (applySize), which is the mount's.
+  const zones = new AvoidZones();
+  zones.set(options.avoid, false);
+  let avoidFade = resolveAvoidFade(options.avoidFade);
 
   // The canvas is the only thing added to the page. Its own background paints
   // the box before the first frame and after a failure, so the container's
@@ -49,7 +58,7 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
   canvas.style.width = '100%';
   canvas.style.height = '100%';
   // An explicit background keeps this colour; otherwise it follows the palette.
-  canvas.style.backgroundColor = options.background || palette.css;
+  canvas.style.backgroundColor = background || palette.css;
   // Only a pond that takes input on its own canvas may block touch scrolling.
   if (interactive === 'canvas') canvas.style.touchAction = 'none';
   container.append(canvas);
@@ -89,6 +98,8 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
     cancelAnimationFrame(raf);
     raf = 0;
     renderer = null;
+    // The page's elements are let go with the pond (A8).
+    zones.clear();
     // Free the GPU side now rather than at GC; browsers cap live contexts
     // per page (about 16) and drop the oldest past that.
     if (gl && !gl.isContextLost()) gl.getExtension('WEBGL_lose_context')?.loseContext();
@@ -106,13 +117,13 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       canvas = blank;
     }
     const error = koiPondError(code, message, cause);
-    if (!options.onError) {
+    if (!onError) {
       console.error(error);
       return;
     }
     // A throwing handler must neither vanish nor escape into a frame callback.
     try {
-      options.onError(error);
+      onError(error);
     } catch (err) {
       console.error(err);
     }
@@ -125,7 +136,7 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
     setPalette(next) {
       if (destroyed) return;
       palette = resolvePalette(next, parseCssColor);
-      if (!options.background) canvas.style.backgroundColor = palette.css;
+      if (!background) canvas.style.backgroundColor = palette.css;
       renderer?.setLook(palette, intensity);
     },
     setIntensity(next) {
@@ -137,6 +148,17 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       if (destroyed) return;
       skyFeatures = resolveSky(next);
       renderer?.setSky(skyFeatures);
+    },
+    setAvoid(list) {
+      // A failed pond accepts the call and keeps nothing (A3).
+      if (destroyed || failed) return;
+      zones.set(list);
+    },
+    setAvoidFade(next) {
+      // Like setAvoid: a failed pond accepts the call and does nothing (A3).
+      if (destroyed || failed) return;
+      avoidFade = resolveAvoidFade(next, avoidFade);
+      renderer?.setAvoidFade(avoidFade);
     },
     pause() {
       paused = true;
@@ -230,6 +252,7 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
         renderer = new Renderer(ctx, fontFamily, software);
         renderer.setLook(palette, intensity);
         renderer.setSky(skyFeatures);
+        renderer.setAvoidFade(avoidFade);
         sizeDirty = true;
         return true;
       } catch (err) {
@@ -375,6 +398,8 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       // The pond stays in CSS px, so pointer mapping is unaffected.
       pond.resize(size.w / size.dpr, size.h / size.dpr);
       r.resize(bw, bh, (size.dpr * bw) / size.w);
+      // The one place besides setAvoid that reads styles (A6).
+      zones.readRadii();
     };
 
     /** Applies a pending resize; false while there is nothing to draw into. */
@@ -390,7 +415,26 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
         sizeDirty = false;
         applySize(renderer);
       }
+      measureZones(renderer);
       return renderer;
+    };
+
+    /**
+     * Measures the readability zones for the draw about to happen. On every
+     * drawn frame and manual draw (D8), never while the loop is stopped: the
+     * page's elements move without telling anyone (scroll, transforms,
+     * animations), so a fresh read is the only way to be right. No reads
+     * without zones, or when the renderer won't draw them (strength 0 without
+     * the debug outline, the raw view); the next frame that draws them
+     * measures afresh.
+     */
+    const measureZones = (r: Renderer) => {
+      let count = 0;
+      if (zones.size > 0 && r.drawsAvoid) {
+        const c = canvas.getBoundingClientRect();
+        count = zones.measure(c, window.innerWidth, window.innerHeight, avoidFade.feather);
+      }
+      r.setAvoid(zones.rects, zones.radii, count);
     };
 
     /** Simulates `dt` seconds and draws; shared by the frame loop and step(). */

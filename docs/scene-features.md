@@ -15,7 +15,7 @@ Values the shader needs per frame run CPU → GPU in one direction:
 
 1. `src/lighting.ts`: derive it from the phase, as `starWeight()`, `moonAt()` and `sunAt()` do, and put it on `Lighting` in `lightingAt()` when it belongs to the light. `render()` in `src/renderer.ts` derives the lighting again only when the phase, palette or sky object changes, so the value depends on those alone, and a changed sky or palette is a new object, not one mutated in place.
 2. `src/renderer.ts`: upload it in the scene pass's uniform chain (`.float('uStars', …)`, `.vec4('uMoon', …)`), zeroed when the feature is off. `src/gl/program.ts` has one setter per uniform type; add one if the type is new.
-3. The chunk that reads it declares it at its top. A uniform more than one chunk reads goes in `src/shaders/scene/uniforms.glsl` instead.
+3. The chunk that reads it declares it at its top. A uniform more than one chunk reads goes in `src/shaders/scene/uniforms.glsl` instead. The exception is a chunk another program also includes: `scene/avoid.glsl` declares its own `uAvoidN`, `uAvoid`, `uAvoidR` and `uAvoidFade`, because the renderer prepends it to `fly.frag` too, without `uniforms.glsl`.
 
 ## The chunk
 
@@ -27,7 +27,7 @@ The scene pass is the chunks in `src/shaders/scene/`, joined in the order `index
 - A compile error names the chunk and line (`sky.glsl:42`).
 - `test/shader-size.test.ts` keeps every shader file within 250 lines and checks the headers.
 
-Something drawn over everything at its own positions, like the fireflies, is a separate program instead: `fly.vert` and `fly.frag`, drawn into the scene target by `renderer.ts`.
+Something drawn over everything at its own positions, like the fireflies, is a separate program instead: `fly.vert` and `fly.frag`, drawn into the scene target by `renderer.ts`. Such a program writes `oInfo` itself, so it must also write the readability mask to `oInfo.b` (the `avoid` zones), or what it draws over a zone comes through unfaded: today the renderer prepends `scene/avoid.glsl` to `fly.frag` and uploads the zone uniforms to it too.
 
 ## The material
 

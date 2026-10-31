@@ -21,6 +21,7 @@ uniform vec3 uTint;         // filter: multiplies the pond's colours
 uniform float uSaturation;  // filter: 0 grey … 1 original
 uniform int uInvert;        // filter: dark glyphs, hues kept
 uniform float uIntensity;   // 0 only the background … 1 the full pond
+uniform vec2 uAvoidDim;     // readability fade toward uOutBg: water, everything else; 0 when off
 #ifdef GLOW
 uniform sampler2D uGlow; // cell-resolution halo, linear filtered (see glow.frag)
 uniform vec2 uGlowScale;  // grid px → glow texture coordinates
@@ -96,7 +97,8 @@ void main() {
     fragColor = vec4(mix(uRawBg, s0.rgb, s0.a), 1.0);
     return;
   }
-  int glyph = int(texelFetch(uScene1, cell, 0).r * 255.0 + 0.5);
+  vec4 s1 = texelFetch(uScene1, cell, 0);
+  int glyph = int(s1.r * 255.0 + 0.5);
   float ink = texelFetch(uAtlas, ivec2(int(float(glyph) * float(uCellPx.x)) + local.x, local.y), 0).r;
   vec3 bg = uBg;
 #ifdef GLOW
@@ -114,6 +116,14 @@ void main() {
     if (uLook == 1) c = ramp(c);
     else if (uLook == 2) c = clamp(filtered(c), 0.0, 1.0);
     if (uIntensity < 1.0) c = mix(uOutBg, c, uIntensity);
+  }
+  // Under page content (the mask in s1.b, scene/avoid.glsl): after every
+  // palette mode, toward the background as drawn, so light and inverted
+  // palettes fade toward their own background, never toward dark ink. A
+  // uniform branch: no zones skips it, and a cell outside them changes nothing.
+  if (uAvoidDim != vec2(0.0) && s1.b > 0.0) {
+    int mat = int(s1.g * 255.0 + 0.5);
+    c = mix(uOutBg, c, 1.0 - (avoidWater(mat) ? uAvoidDim.x : uAvoidDim.y) * s1.b);
   }
   fragColor = vec4(c, 1.0);
 }

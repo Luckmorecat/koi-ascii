@@ -16,6 +16,10 @@ precision highp sampler2D;
 #define M_FLY 10  // a firefly, over everything (sky feature `fireflies`; fly.frag)
 #define M_SUN 11  // the sun's glitter (sky feature `sun`)
 
+// The water and what is on it, for the readability fade (scene/avoid.glsl
+// thins it, ascii.frag dims it, each by the water's own amount).
+bool avoidWater(int mat) { return mat <= M_TRAIL || mat == M_GLINT; }
+
 #define PI 3.14159265
 #define TAU 6.28318531
 

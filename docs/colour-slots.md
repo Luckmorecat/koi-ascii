@@ -43,7 +43,7 @@ A new slot is optional and additive, so existing palettes, including user copies
 
 - **Derivations are public behaviour.** A user who leaves a slot out sees what `resolveRoles()` and `rolesScene()` derive. Change a released derivation in a minor version with a changelog line, never silently.
 - **A light background has no glow pass** (`palette.light` in `renderer.ts`). An effect built mostly from halo, such as fireflies, needs a glyph-only look to stay visible on `paper`.
-- **Intensity applies itself** in `ascii.frag`, after every mode. Draw new objects at full strength.
+- **Intensity applies itself** in `ascii.frag`, after every mode. Draw new objects at full strength. The readability fade under `avoid` zones works the same way: `ascii.frag` blends toward `uOutBg` after every mode, by the mask in `oInfo.b`, so it needs no slot and fades toward the background on light and inverted palettes too.
 - **Three luminance functions, on purpose:** Rec.601 `lum()` in `ascii.frag` (ramp and filter were tuned on it), Rec.709 in `look.ts` (greying the light) and WCAG in `palette.ts` (the 0.4 light threshold). Pick the one matching the job you are touching, rather than unifying them.
 
 The plan for future objects (lily pads, seasons) and their likely slots is in the [colour rules comment on #4](https://github.com/Luckmorecat/koi-ascii/issues/4#issuecomment-6319060599).

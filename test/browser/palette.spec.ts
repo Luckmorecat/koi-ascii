@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { mount, open, running } from './helpers';
-import type { KoiPondOptions, KoiPondPalette } from '../../src/index';
+import { mount, open, running, type JsonOptions } from './helpers';
+import type { KoiPondPalette } from '../../src/index';
 
 // Palettes and intensity, checked by sampling the drawn pixels (no golden
 // images). Every sample redraws the current state and reads the drawing
@@ -83,7 +83,7 @@ function canvasBackground(page: Page, i: number): Promise<string> {
   return page.evaluate((i) => window.koiTest.ponds[i].container.querySelector('canvas')!.style.backgroundColor, i);
 }
 
-async function pond(page: Page, options: Omit<KoiPondOptions, 'onError'>): Promise<number> {
+async function pond(page: Page, options: JsonOptions): Promise<number> {
   const i = await mount(page, BOX, options);
   await running(page, i);
   return i;

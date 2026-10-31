@@ -16,6 +16,7 @@ import markings from './markings.glsl?raw';
 import trails from './trails.glsl?raw';
 import compose from './compose.glsl?raw';
 import glyphs from './glyphs.glsl?raw';
+import avoid from './avoid.glsl?raw';
 import main from './main.frag?raw';
 
 /** Each chunk's file name and source, in compile order. */
@@ -31,6 +32,7 @@ export const sceneChunks: readonly (readonly [name: string, src: string])[] = [
   ['trails.glsl', trails],
   ['compose.glsl', compose],
   ['glyphs.glsl', glyphs],
+  ['avoid.glsl', avoid],
   ['main.frag', main],
 ];
 

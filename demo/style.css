@@ -30,3 +30,32 @@ body {
 #fallback[hidden] {
   display: none;
 }
+
+/* ?avoid: a headline over the pond, listed as a readability zone (main.ts). */
+#headline {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(46rem, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border-radius: 12px;
+  color: var(--ink, #dcecee);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  text-align: center;
+  pointer-events: none;
+}
+
+#headline h1 {
+  margin: 0 0 12px;
+  font-size: clamp(28px, 6vw, 52px);
+  line-height: 1.1;
+}
+
+#headline p {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  opacity: 0.85;
+}

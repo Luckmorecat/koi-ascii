@@ -52,6 +52,8 @@ const pond = createKoiPond(container, {
   palette: 'pond', // a preset name or a palette object; see "Palettes"
   intensity: 1, // 0 background only … 1 full pond; see "Intensity"
   sky: { moon: true }, // night-sky features; see "Night sky"
+  avoid: [document.querySelector('h1')], // fade under page content; see "Readable content"
+  avoidFade: { strength: 1, feather: 56 },
   background: '#06131a', // CSS colour before the first frame and on failure
   onError: (error) => console.warn(error.code),
 });
@@ -66,10 +68,12 @@ const pond = createKoiPond(container, {
 | `palette`     | `'pond'`                                                      | Can change later with `setPalette`. See "Palettes". |
 | `intensity`   | `1`                                                           | Can change later with `setIntensity`. See "Intensity". |
 | `sky`         | stars, fireflies and `darkNight` on; moon and sun off         | Can change later with `setSky`. See "Night sky".   |
+| `avoid`       | none                                                          | Can change later with `setAvoid`. See "Readable content". |
+| `avoidFade`   | `{ strength: 1, feather: 56 }`                                | Can change later with `setAvoidFade`. See "Readable content". |
 | `background`  | the palette's background                                      | Shown until the first frame and if the pond fails. |
 | `onError`     | logs to the console                                           | See "Failure".                                     |
 
-The time, palette, intensity and sky can change after creation. For anything else,
+The time, palette, intensity, sky and readability zones can change after creation. For anything else,
 `destroy()` the pond and create a new one.
 
 Without `background`, the container shows the palette's background (and
@@ -85,6 +89,8 @@ always drawn on the palette's background.
 | `setPalette(palette)` | Recolours the pond from the next frame on; the fish carry on. |
 | `setIntensity(intensity)` | Fades the pond towards its background from the next frame on. Animate it for a fade. |
 | `setSky(sky)`   | Turns night-sky features on or off from the next frame on, with the same values as the `sky` option; the fish carry on. |
+| `setAvoid(list)` | Replaces the readability zones from the next frame on. `[]` removes them. |
+| `setAvoidFade(fade)` | Changes the fade under the zones from the next frame on. Fields left out keep their current values. Animate `strength` to fade it in or out. |
 | `pause()`       | Stops simulating and drawing. The last frame stays on screen.                                    |
 | `resume()`      | Carries on from where it paused, without jumping ahead.                                          |
 | `destroy()`     | Stops the pond, removes its canvas, listeners and observers and frees its WebGL context. Safe to call twice, and safe before the pond has started. |
@@ -92,7 +98,8 @@ always drawn on the palette's background.
 Exported types: `KoiPond`, `KoiPondOptions`, `KoiPondTime`,
 `KoiPondInteractive`, `KoiPondError`, `KoiPondErrorCode`, `KoiPondPalette`,
 `KoiPondPaletteName`, `KoiPondRampPalette`, `KoiPondRolesPalette`,
-`KoiPondFilterPalette`, `KoiPondColor`, `KoiPondSky`, `KoiPondSkyFeatures`.
+`KoiPondFilterPalette`, `KoiPondColor`, `KoiPondSky`, `KoiPondSkyFeatures`,
+`KoiPondAvoid`, `KoiPondAvoidFade`.
 Exported value besides `createKoiPond`: `koiPalettes`.
 
 ## Time of day
@@ -293,6 +300,76 @@ requestAnimationFrame(function fade(now) {
 });
 ```
 
+## Readable content
+
+A hero headline, cards or prose over the pond stay readable when you list
+them in `avoid`: the pond fades everything it draws under each element (fish,
+water, trails, fireflies, moon, sun and glow), with a soft edge, and stays
+alive everywhere else. Fish swim under the text as if deeper; they don't steer
+around it.
+
+```js
+const pond = createKoiPond(el, {
+  avoid: [
+    document.querySelector('.hero h1'), // the element's box, grown by 12 px
+    { element: document.querySelector('.card'), pad: 24 }, // a wider margin
+  ],
+  avoidFade: { strength: 1, feather: 56 },
+});
+
+pond.setAvoid([...document.querySelectorAll('article p')]); // replaces the list
+pond.setAvoidFade({ strength: 0.5 }); // the feather stays 56
+```
+
+| Setting    | Default | Notes |
+| ---------- | ------- | ----- |
+| `pad`      | `12`    | CSS px the zone extends past the element's box on every side. The corners are rounded by the element's `border-radius` plus `pad`. |
+| `strength` | `1`     | 0 turns the fade off (the zones stay listed) … 1 the tuned look. Clamped to [0, 1]. |
+| `feather`  | `56`    | Width of the soft edge outside the padded box, in CSS px. 0 is a hard edge; 48 to 80 looks intentional. |
+
+- **Invalid values** fall back with a `console.warn`: a negative or non-number
+  `pad` gives 12 (so does a non-finite one), a negative or non-finite `feather` 56, a non-finite
+  `strength` 1. An `avoid` that isn't an array is treated as `[]`, and an entry
+  that isn't an element or `{ element }` (a `DOMRect` included) is skipped.
+- **`setAvoidFade` merges.** Fields you leave out keep their current values,
+  so animating `strength` keeps a custom `feather`.
+- **Up to 16 zones** are drawn at once. Elements outside the visible part of
+  the canvas (with a margin of 50 px plus the feather) don't count. Past 16
+  visible zones, the first 16 in list order are used and the pond warns once
+  per list.
+- **Hidden and detached elements:** an element that measures zero size
+  (`display: none`, removed from the page) is skipped, and counts again when
+  it has a size. The pond keeps its references until `setAvoid` replaces the
+  list or `destroy()` runs, so call `setAvoid` when you remove elements for
+  good.
+- **Pointer:** with `interactive: 'window'`, fish that the pointer draws
+  under a hovered card still come, and fade as they arrive. Zones and the
+  pointer don't know about each other.
+- **When to use a CSS scrim instead:** for opaque UI such as modals, menus
+  and nav bars, put a background on the element. The fade keeps the pond
+  visible under the zone as texture, which suits text, not controls that
+  should hide what is behind them.
+
+**Cost.** The fade itself costs no measurable GPU time. Each frame the pond
+draws, it calls `getBoundingClientRect()` on every listed element (about 5 µs
+for 8 elements, 9 µs for 16, 30 µs for 64, 90 µs for 200), so scrolling,
+resizing, sticky elements, transforms and CSS animations need no listeners.
+`border-radius` is read only when the list is set, when the pond mounts or
+resizes, and when an element comes back from zero size. It is cached in
+between, so a `border-radius` change from CSS (a hover style, a toggled
+class) keeps the old corners until then; call `setAvoid` again to pick it up.
+Nothing is read while the pond is paused (manual draws such as `step` still
+measure), off-screen or in a hidden tab, when the list is empty, or while
+`strength` is 0, so a faded-out fade costs no layout reads.
+Culling with `IntersectionObserver`, for long lists, may come later without
+an API change.
+
+**Known limit.** The read happens inside the pond's own animation frame. If
+your page writes layout both before and after that read in the same frame,
+the read forces one extra layout (about 4 ms on a heavy page), however many
+elements are listed. If your page's own animation frame changes layout after
+the read, the zones lag that change by one frame.
+
 ## Interaction
 
 - `'window'` (default): passive pointer listeners on `window`, mapped into the
@@ -355,8 +432,8 @@ logged to the console. Show your own fallback from `onError` if you want one.
   hidden, and continues without a jump when it comes back. `pause()` and the
   automatic pause combine: either one keeps it paused.
 - While a pond is paused (by `pause()` or because it is off-screen), it draws
-  nothing: a `setTime`, `setPalette`, `setIntensity`, `setSky` or a resize of the
-  container shows when it resumes.
+  nothing: a `setTime`, `setPalette`, `setIntensity`, `setSky`, `setAvoid`,
+  `setAvoidFade` or a resize of the container shows when it resumes.
 - With `prefers-reduced-motion: reduce`, the fish swim slower, the water
   flickers less, the stars hold still, the moon's reflection sways slower, the
   sun's glitter flashes slower and the fireflies drift slower and glow softly
@@ -394,8 +471,9 @@ link shows the same scene. Defaults are left out of the URL.
 | `palette` | `pond`, `mono`, `phosphor`, `amber`, `paper`, `brand` | A preset (custom palettes can't go in the URL). Default `pond`; anything else is `pond`. |
 | `intensity` | `0` … `1`               | Default 1.                                                                     |
 | `sky`   | `all` (or `on`), `none` (or `off`), or the features that are on, comma-separated: `stars,fireflies,darkNight,moon,sun` | Default `stars,fireflies,darkNight` (left out of the URL); `none` is the 0.1 pond. Anything unreadable gives the defaults. |
+| `avoid` | flag                      | Adds a centred headline and a line of text over the pond, listed as one readability zone (see "Readable content"). |
 
-`seed`, `time`, `phase`, `cycle`, `palette`, `intensity` and `sky` also work without
+`seed`, `time`, `phase`, `cycle`, `palette`, `intensity`, `sky` and `avoid` also work without
 `?debug`. Pause and
 viewport size are not kept in the URL. The older `?perf` param is gone, and
 `sky` no longer takes `slider|loop`: an old `?sky=slider&phase=0.8` link now
@@ -468,6 +546,7 @@ console.log(await page.evaluate(() => koi.help()));
 | `setPalette`  | `palette`                     | Switches to a preset (`pond`, `mono`, `phosphor`, `amber`, `paper`, `brand`). |
 | `setIntensity` | `intensity`                  | 0 background only … 1 full pond.                                       |
 | `setSky`      | `stars?`, `fireflies?`, `darkNight?`, `moon?`, `sun?` | Turns sky features on or off; omitted ones keep their value. |
+| `showAvoid`   | `on?`                         | Outlines the readability zones (`?avoid`) at their padded edge in red; no args toggles. Returns `{ on }`. The raw view shows no zones. Not kept in the URL. |
 | `reseed`      | `seed?`                       | Remounts the pond with a seed (random if omitted), as on a fresh load of the URL. |
 | `getFish`     |                               | Each fish's variety, position, heading, speed, depth, behaviour.      |
 | `pause`, `resume` |                           | Stops and restarts the frame loop (no catch-up after a pause).        |

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { mount, open, running } from './helpers';
-import type { KoiPondOptions, KoiPondSky } from '../../src/index';
+import { mount, open, running, type JsonOptions } from './helpers';
+import type { KoiPondSky } from '../../src/index';
 import { GLYPHS } from '../../src/glyphs';
 
 // The `sky` option and setSky(): the darker night, the stars, the moon, the
@@ -50,7 +50,7 @@ function setSky(page: Page, i: number, sky: KoiPondSky | undefined): Promise<voi
   return page.evaluate(([i, sky]) => window.koiTest.ponds[i].handle.setSky(sky as KoiPondSky), [i, sky] as const);
 }
 
-async function pond(page: Page, options: Omit<KoiPondOptions, 'onError'>, box = BOX): Promise<number> {
+async function pond(page: Page, options: JsonOptions, box = BOX): Promise<number> {
   const i = await mount(page, box, options);
   await running(page, i);
   // Hold the frame loop, so samples see exactly the state they redraw.
