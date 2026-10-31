@@ -31,6 +31,8 @@ function start(scene: SceneState = { ...DEFAULT_SCENE }): void {
     setPalette: (p) => void calls.push(`palette ${String(p)}`),
     setIntensity: (i) => void calls.push(`intensity ${i}`),
     setSky: (sky) => void calls.push(`sky ${JSON.stringify(sky)}`),
+    setAvoid() {},
+    setAvoidFade() {},
     pause() {},
     resume() {},
     destroy: () => void destroyed++,

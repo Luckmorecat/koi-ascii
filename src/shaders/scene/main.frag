@@ -8,8 +8,9 @@
 //
 // Uniforms (own): uOrder, uOriginCss, uLayer, uFishDraw.
 // Uniforms (uniforms.glsl): uCell, uFishCount, uRipplePx.
-// Depends on: cell.glsl, ripples.glsl, water.glsl, sky.glsl, trails.glsl,
-//   compose.glsl, glyphs.glsl.
+// Uniforms (other chunks): uAvoidN, uAvoidFade (avoid.glsl), uHiRed (markings.glsl).
+// Depends on: cell.glsl, ripples.glsl, water.glsl, sky.glsl, markings.glsl,
+//   trails.glsl, compose.glsl, glyphs.glsl, avoid.glsl.
 
 uniform int uOrder[MAX_FISH];
 uniform vec2 uOriginCss; // world position of the grid's top-left corner
@@ -17,7 +18,7 @@ uniform int uLayer;      // 0 the water and all on it, 1 the fish
 uniform int uFishDraw;   // fish drawn: 0 in layer 0, uFishCount in layer 1
 
 layout(location = 0) out vec4 oColor; // rgb colour, a density (for the raw view)
-layout(location = 1) out vec4 oInfo;  // r glyph index, g cell class
+layout(location = 1) out vec4 oInfo;  // r glyph index, g cell class, b readability mask (avoid.glsl)
 
 void main() {
   vec2 p = (floor(gl_FragCoord.xy) + 0.5) * uCell + uOriginCss;
@@ -59,7 +60,25 @@ void main() {
   // Unclaimed: layer 0 already drew this cell.
   if (uLayer == 1 && c.mat < 0) discard;
 
+  // Under page content: fewer, lighter glyphs here; ascii.frag dims them. No
+  // zones (or the raw view) skips it all, so the pond draws bit for bit as
+  // without them.
+  float m = 0.0;
+  bool outline = false;
+  if (uAvoidN > 0) {
+    float d = avoidDist(p);
+    m = avoidMask(d);
+    if (m > 0.0) c.dens *= avoidThin(m, c.mat);
+    // Debug: a dotted line in an existing colour on each zone's edge, unfaded.
+    outline = uAvoidFade.w > 0.5 && abs(d) < 0.5 * max(uCell.x, uCell.y);
+  }
+
   int glyph = pickGlyph(c, ivec2(gl_FragCoord.xy));
+  if (outline) {
+    c.col = uHiRed;
+    glyph = G_DOT;
+    m = 0.0;
+  }
   oColor = vec4(c.col, clamp(c.dens, 0.0, 1.0));
-  oInfo = vec4(float(glyph) / 255.0, float(c.mat) / 255.0, 0.0, 0.0);
+  oInfo = vec4(float(glyph) / 255.0, float(c.mat) / 255.0, m, 0.0);
 }

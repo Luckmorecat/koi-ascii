@@ -10,8 +10,14 @@ export async function open(page: Page): Promise<void> {
   await page.waitForFunction(() => !!window.koiTest);
 }
 
-/** Mounts a pond (options must be JSON; onError is the fixture's) and returns its index. */
-export function mount(page: Page, box: Box, options: Omit<KoiPondOptions, 'onError'> = {}): Promise<number> {
+/**
+ * Options a spec can send: JSON only, so no `avoid` (elements; specs call
+ * setAvoid inside page.evaluate) and no `onError` (the fixture's).
+ */
+export type JsonOptions = Omit<KoiPondOptions, 'onError' | 'avoid'>;
+
+/** Mounts a pond and returns its index. */
+export function mount(page: Page, box: Box, options: JsonOptions = {}): Promise<number> {
   return page.evaluate(([box, options]) => window.koiTest.mount(box, options), [box, options] as const);
 }
 

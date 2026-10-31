@@ -9,6 +9,7 @@ import emissionFnSrc from './shaders/emission.glsl?raw';
 import emissionSrc from './shaders/emission.frag?raw';
 import flyVertSrc from './shaders/fly.vert?raw';
 import flyFragSrc from './shaders/fly.frag?raw';
+import avoidSrc from './shaders/scene/avoid.glsl?raw';
 import { Program } from './gl/program';
 import { createTarget, createTexture, deleteTarget, type Target, type TexFormat } from './gl/target';
 import { buildAtlas, glyphDefines, type Atlas } from './glyphs';
@@ -20,6 +21,7 @@ import { POND, POND_BG, WHITE, type ResolvedPalette } from './palette';
 import { asciiLook, brightnessOnly, POND_SCENE, rampUniforms, rolesScene, type AsciiLook, type SceneColors } from './look';
 import { DEFAULT_SKY, firefliesAt, starsAt, type SkyFeatures, type StarsFrame } from './sky-features';
 import { FIREFLY_COUNT, FIREFLY_FLOATS } from './fireflies';
+import { AVOID_MAX, avoidAmounts, DEFAULT_FADE, type AvoidAmounts, type AvoidFade } from './avoid';
 
 /** World px per ripple simulation texel. */
 const RIPPLE_PX = 5;
@@ -66,6 +68,8 @@ export class Renderer {
   intensity = 1;
   /** Night-sky features, already resolved; mount() owns them like the palette. */
   sky: SkyFeatures = DEFAULT_SKY;
+  /** Debug switch: outlines the readability zones (in the palette's hi red) and draws them even at strength 0. */
+  showAvoid = false;
 
   private readonly gl: WebGL2RenderingContext;
   private readonly fontFamily: string;
@@ -87,6 +91,14 @@ export class Renderer {
   private readonly dropBuf = new Float32Array(MAX_DROPS * 4);
   private readonly stopBuf = new Float32Array(5 * 3);
   private readonly stopDeltaBuf = new Float32Array(4 * 3);
+  /** Readability zones for the next frames (mount() measures them): x, y, w, h and a radius each, world px. */
+  private avoidRects: Float32Array = new Float32Array(AVOID_MAX * 4);
+  private avoidRadii: Float32Array = new Float32Array(AVOID_MAX);
+  private avoidCount = 0;
+  /** The readability fade, already resolved; mount() owns it like the palette. */
+  private avoidFade: AvoidFade = DEFAULT_FADE;
+  /** What avoidFade's strength does to each material (worked out once per setAvoidFade, not per frame). */
+  private avoidAmounts: AvoidAmounts = avoidAmounts(DEFAULT_FADE.strength);
   /** Scene colours for the active palette (roles replace the pond's). */
   private sceneColors: Readonly<SceneColors> = POND_SCENE;
   private uploadedColors: Readonly<SceneColors> | null = null;
@@ -171,7 +183,9 @@ export class Renderer {
     const glow = emission ? `#define EMIT_TEX\n${glowSrc}` : `${emissionFnSrc}\n${glowSrc}`;
     this.glowProg = software ? null : new Program(gl, vertex, fragment(glow), 'glow');
     this.asciiProg = new Program(gl, pixelVertex, fragment((software ? '' : '#define GLOW\n') + asciiSrc), 'ascii');
-    this.flyProg = new Program(gl, `#version 300 es\n${commonSrc}\n${flyVertSrc}`, fragment(flyFragSrc), 'fly');
+    // The readability mask (scene/avoid.glsl) goes before fly.frag: a firefly
+    // over page content writes it too.
+    this.flyProg = new Program(gl, `#version 300 es\n${commonSrc}\n${flyVertSrc}`, fragment(`${avoidSrc}\n${flyFragSrc}`), 'fly');
 
     const vao = gl.createVertexArray();
     const flyVao = gl.createVertexArray();
@@ -216,6 +230,23 @@ export class Renderer {
   /** Sets the night-sky features; the next render() draws with them. */
   setSky(sky: SkyFeatures): void {
     this.sky = sky;
+  }
+
+  /**
+   * Sets the readability zones the next render() fades under: `count` zones,
+   * `rects` x, y, w, h and `radii` one per zone, in world px. The arrays are
+   * kept, not copied (mount() refills them before each draw).
+   */
+  setAvoid(rects: Float32Array, radii: Float32Array, count: number): void {
+    this.avoidRects = rects;
+    this.avoidRadii = radii;
+    this.avoidCount = Math.min(count, AVOID_MAX);
+  }
+
+  /** Sets the readability fade; the next render() draws with it. */
+  setAvoidFade(fade: AvoidFade): void {
+    this.avoidFade = fade;
+    this.avoidAmounts = avoidAmounts(fade.strength);
   }
 
   /** Sizes everything for a drawing buffer of devW × devH device pixels. */
@@ -311,6 +342,11 @@ export class Renderer {
     const sceneLight = this.sceneLight;
     const stars = this.stars;
     const flies = this.flies;
+    // Readability zones: none in the raw view (A14), and none at strength 0
+    // unless outlined, so those frames draw exactly as without zones.
+    const fade = this.avoidFade;
+    const amounts = this.avoidAmounts;
+    const zones = this.raw || (fade.strength <= 0 && !this.showAvoid) ? 0 : this.avoidCount;
     const gl = this.gl;
     const atlas = this.atlas;
     const scene = this.scene;
@@ -386,7 +422,9 @@ export class Renderer {
       .float('uMoteThin', stars.moteThin)
       .vec2('uView', this.devW / this.dpr, this.devH / this.dpr)
       .vec4('uMoon', light.moon.pos[0], light.moon.pos[1], light.moon.radius, this.sky.moon ? light.moon.alpha : 0)
-      .vec4('uSun', light.sun.pos[0], light.sun.pos[1], light.sun.radius, this.sky.sun ? light.sun.alpha : 0);
+      .vec4('uSun', light.sun.pos[0], light.sun.pos[1], light.sun.radius, this.sky.sun ? light.sun.alpha : 0)
+      .int('uAvoidN', zones);
+    if (zones > 0) this.avoidUniforms(sp, amounts);
     // Two draws, so the waves that run the fish no longer also run the water
     // under them: every cell's water and all on it, then the fish over that
     // (main.frag discards the cells no fish claims).
@@ -414,7 +452,9 @@ export class Renderer {
         .vec2('uCell', atlas.cellW / this.dpr, atlas.cellH / this.dpr)
         .vec2('uOriginCss', this.originX / this.dpr, this.originY / this.dpr)
         .ivec2('uGrid', this.cols, this.rows)
-        .float('uFlies', flies);
+        .float('uFlies', flies)
+        .int('uAvoidN', zones);
+      if (zones > 0) this.avoidUniforms(fp, amounts);
       gl.drawArrays(gl.POINTS, 0, FIREFLY_COUNT);
       gl.bindVertexArray(this.vao);
     }
@@ -486,7 +526,8 @@ export class Renderer {
       .vec3('uTint', tint[0], tint[1], tint[2])
       .float('uSaturation', filter?.saturation ?? 1)
       .int('uInvert', filter?.invert ? 1 : 0)
-      .float('uIntensity', this.raw ? 1 : this.intensity);
+      .float('uIntensity', this.raw ? 1 : this.intensity)
+      .vec2('uAvoidDim', zones > 0 ? amounts.waterDim : 0, zones > 0 ? amounts.fishDim : 0);
     if (this.glowTarget) {
       // Bound in the raw view too (stale there, but the raw branch never reads it).
       ascii
@@ -495,6 +536,15 @@ export class Renderer {
         .int('uGlowOn', haloDrawn ? 1 : 0);
     }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  /** The zones and their thinning, for the scene and firefly programs (scene/avoid.glsl). */
+  private avoidUniforms(prog: Program, amounts: AvoidAmounts): void {
+    prog
+      .vec4s('uAvoid', this.avoidRects)
+      // Four radii to a vec4 (uAvoidR[AVOID_MAX / 4]).
+      .vec4s('uAvoidR', this.avoidRadii)
+      .vec4('uAvoidFade', amounts.waterThin, amounts.fishThin, this.avoidFade.feather, this.showAvoid ? 1 : 0);
   }
 
   /** Moves up to MAX_DROPS pending impulses into the uniform buffer, in sim texels. */

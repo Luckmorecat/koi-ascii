@@ -112,6 +112,26 @@ export interface KoiPondSkyFeatures {
  */
 export type KoiPondSky = boolean | KoiPondSkyFeatures;
 
+/**
+ * A page element the pond fades under, so content over it stays readable:
+ * the element itself, or `{ element, pad }` with `pad` the CSS px the zone
+ * extends past the element's box on every side (default 12). The zone's
+ * corners follow the element's `border-radius` plus `pad`. The pond measures
+ * every listed element on each frame it draws, so scrolling, resizing,
+ * transforms and animations need nothing more; an element that measures zero
+ * size (hidden, detached) is skipped until it has a size again. The pond
+ * keeps its references until `setAvoid` replaces the list or `destroy()`.
+ */
+export type KoiPondAvoid = Element | { element: Element; pad?: number };
+
+/** How the pond fades under the `avoid` zones. */
+export interface KoiPondAvoidFade {
+  /** 0 off … 1 the tuned look (default). Scales every fade amount together. */
+  strength?: number;
+  /** Width of the soft edge in CSS px. Default 56. */
+  feather?: number;
+}
+
 export interface KoiPondOptions {
   /** Default `{ mode: 'loop', cycle: 600, phase: 0 }`. */
   time?: KoiPondTime;
@@ -131,6 +151,14 @@ export interface KoiPondOptions {
   /** Default: stars, fireflies and the darker night on; moon and sun off. */
   sky?: KoiPondSky;
   /**
+   * Page elements to fade under (hero text, cards), up to 16 visible at once:
+   * past that the first 16 in list order are used. Default none.
+   * Invalid entries are skipped with a `console.warn`.
+   */
+  avoid?: KoiPondAvoid[];
+  /** Default `{ strength: 1, feather: 56 }`; invalid values fall back with a `console.warn`. */
+  avoidFade?: KoiPondAvoidFade;
+  /**
    * CSS colour shown before the first frame and if the pond fails. Default:
    * the palette's background (and it follows `setPalette`).
    */
@@ -148,6 +176,13 @@ export interface KoiPond {
   setIntensity(intensity: number): void;
   /** Changes the night-sky features from the next frame on, as the `sky` option would; the fish carry on. */
   setSky(sky: KoiPondSky): void;
+  /** Replaces the zone list from the next frame on. */
+  setAvoid(list: KoiPondAvoid[]): void;
+  /**
+   * Changes the fade from the next frame on; animate `strength` to fade it in
+   * or out. Fields left out keep their current values.
+   */
+  setAvoidFade(fade: KoiPondAvoidFade): void;
   /** Stops simulating and drawing until `resume()`; combines with the off-screen pause. */
   pause(): void;
   resume(): void;

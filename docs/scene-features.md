@@ -27,7 +27,7 @@ The scene pass is the chunks in `src/shaders/scene/`, joined in the order `index
 - A compile error names the chunk and line (`sky.glsl:42`).
 - `test/shader-size.test.ts` keeps every shader file within 250 lines and checks the headers.
 
-Something drawn over everything at its own positions, like the fireflies, is a separate program instead: `fly.vert` and `fly.frag`, drawn into the scene target by `renderer.ts`.
+Something drawn over everything at its own positions, like the fireflies, is a separate program instead: `fly.vert` and `fly.frag`, drawn into the scene target by `renderer.ts`. Such a program writes `oInfo` itself, so it must also write the readability mask to `oInfo.b` (the `avoid` zones), or what it draws over a zone comes through unfaded: today the renderer prepends `scene/avoid.glsl` to `fly.frag` and uploads the zone uniforms to it too.
 
 ## The material
 
