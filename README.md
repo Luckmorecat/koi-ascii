@@ -350,7 +350,8 @@ pond.setAvoidFade({ strength: 0.5 }); // the feather stays 56
   visible under the zone as texture, which suits text, not controls that
   should hide what is behind them.
 
-**Cost.** The fade itself costs no measurable GPU time. Each frame the pond
+**Cost.** On the GPU the fade adds about 1 µs to a frame (+3.6% at
+1280×800). Each frame the pond
 draws, it calls `getBoundingClientRect()` on every listed element (about 5 µs
 for 8 elements, 9 µs for 16, 30 µs for 64, 90 µs for 200), so scrolling,
 resizing, sticky elements, transforms and CSS animations need no listeners.

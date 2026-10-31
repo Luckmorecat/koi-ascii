@@ -3,6 +3,39 @@
 Each release's entry becomes its GitHub Release. A version bump needs an
 entry here before it can merge (`npm run release:check`).
 
+## [0.4.0] - 2026-10-31
+
+Page content stays readable over the pond. List the elements that carry
+text, such as a hero headline, cards or prose, and the pond fades
+everything it draws under them with a soft edge, while it carries on
+everywhere else. A pond with no zones draws exactly as 0.3.2 does.
+
+### Added
+- The `avoid` option and `setAvoid()` list elements (or
+  `{ element, pad }`) to fade under. Each zone follows its element through
+  scrolling, resizing, sticky positioning, transforms and animations, with
+  the element's `border-radius` plus `pad` (default 12 px) as its corners.
+- The `avoidFade` option and `setAvoidFade()` set the fade's `strength`
+  (0 off … 1, the default) and `feather` (the soft edge, default 56 px).
+  Fields left out of `setAvoidFade()` keep their current values, so
+  `strength` can be animated to fade zones in or out.
+- Fish, water, trails, fireflies, moon, sun and glow all fade toward the
+  palette's own background, so the fade is correct on light palettes
+  such as `paper` too.
+- Up to 16 zones are visible at once; past that, the first 16 in list
+  order are kept, with a warning. Hidden, detached and off-canvas elements
+  don't count.
+- In demo debug mode, `koi.showAvoid()` outlines the zones, and `?avoid`
+  puts a sample headline over the pond.
+
+### Performance
+- Each frame reads the layout of every listed element (about 5 µs for 8
+  elements, 9 µs for 16). Nothing is read while the pond is paused,
+  off-screen or at `strength: 0`. See "Readable content" in the README
+  for when this can force an extra layout.
+- With a zone, a frame takes about 1 µs more GPU time (+3.6% at
+  1280×800).
+
 ## [0.3.2] - 2026-10-31
 
 The same pond, drawn faster, with no API or option changes. On the test
