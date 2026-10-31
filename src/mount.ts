@@ -34,6 +34,9 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       ? options.seed >>> 0
       : (Math.random() * 2 ** 32) >>> 0;
   const sky = new Sky(timeSource(options.time, 0));
+  // Kept apart from `options` so the closures below don't hold the whole
+  // object, and with it the `avoid` elements past setAvoid([]) or destroy().
+  const { background, onError } = options;
   // The look lives here, not in the Renderer, so it survives a lost context
   // (a restored context builds a fresh Renderer) and a setter called before
   // the renderer is up.
@@ -55,7 +58,7 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
   canvas.style.width = '100%';
   canvas.style.height = '100%';
   // An explicit background keeps this colour; otherwise it follows the palette.
-  canvas.style.backgroundColor = options.background || palette.css;
+  canvas.style.backgroundColor = background || palette.css;
   // Only a pond that takes input on its own canvas may block touch scrolling.
   if (interactive === 'canvas') canvas.style.touchAction = 'none';
   container.append(canvas);
@@ -114,13 +117,13 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
       canvas = blank;
     }
     const error = koiPondError(code, message, cause);
-    if (!options.onError) {
+    if (!onError) {
       console.error(error);
       return;
     }
     // A throwing handler must neither vanish nor escape into a frame callback.
     try {
-      options.onError(error);
+      onError(error);
     } catch (err) {
       console.error(err);
     }
@@ -133,7 +136,7 @@ export function mount(container: HTMLElement, options: KoiPondOptions): KoiPond 
     setPalette(next) {
       if (destroyed) return;
       palette = resolvePalette(next, parseCssColor);
-      if (!options.background) canvas.style.backgroundColor = palette.css;
+      if (!background) canvas.style.backgroundColor = palette.css;
       renderer?.setLook(palette, intensity);
     },
     setIntensity(next) {
