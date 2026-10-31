@@ -355,8 +355,12 @@ draws, it calls `getBoundingClientRect()` on every listed element (about 5 µs
 for 8 elements, 9 µs for 16, 30 µs for 64, 90 µs for 200), so scrolling,
 resizing, sticky elements, transforms and CSS animations need no listeners.
 `border-radius` is read only when the list is set, when the pond mounts or
-resizes, and when an element comes back from zero size. Nothing is read while
-the pond is paused, off-screen or in a hidden tab, or when the list is empty.
+resizes, and when an element comes back from zero size. It is cached in
+between, so a `border-radius` change from CSS (a hover style, a toggled
+class) keeps the old corners until then; call `setAvoid` again to pick it up.
+Nothing is read while the pond is paused (manual draws such as `step` still
+measure), off-screen or in a hidden tab, when the list is empty, or while
+`strength` is 0, so a faded-out fade costs no layout reads.
 Culling with `IntersectionObserver`, for long lists, may come later without
 an API change.
 
